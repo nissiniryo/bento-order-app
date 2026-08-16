@@ -1524,7 +1524,7 @@ function aggregateMenuEmployeeBreakdown(rawRows){
     }
     const menuEntry = menuMap.get(r.menu_id);
     if(!menuEntry.empMap.has(r.employee_id)){
-      menuEntry.empMap.set(r.employee_id, { code: r.code, name: r.name, totalQty: 0, totalAmount: 0 });
+      menuEntry.empMap.set(r.employee_id, { code: r.code, name: r.name, aggDept: r.agg_dept||"", totalQty: 0, totalAmount: 0 });
     }
     const empEntry = menuEntry.empMap.get(r.employee_id);
     empEntry.totalQty += (r.qty || 1);
@@ -1543,6 +1543,21 @@ function aggregateMenuEmployeeBreakdown(rawRows){
   return menus;
 }
 
+// あるメニューを発注した対象者一覧（各要素に aggDept, totalQty, totalAmount を持つ）を
+// 「集計用部署名」でまとめ、そのメニュー内での部署別月間合計数量・金額を算出する
+// （集計用部署名が未設定の対象者は部署別集計には含めない。全体の部署別集計と同じルール）
+function aggregateMenuDeptTotals(employees){
+  const map = new Map();
+  employees.filter(e=> e.aggDept).forEach(e=>{
+    const key = e.aggDept;
+    if(!map.has(key)) map.set(key, { dept: key, totalQty: 0, totalAmount: 0 });
+    const d = map.get(key);
+    d.totalQty += e.totalQty;
+    d.totalAmount += e.totalAmount;
+  });
+  return [...map.values()].sort((a,b)=> a.dept.localeCompare(b.dept, "ja"));
+}
+
 function renderMonthlyAdmin(container){
   const {start, end} = periodRange(monthlyYm);
   const [, m] = monthlyYm.split("-");
@@ -1559,7 +1574,7 @@ function renderMonthlyAdmin(container){
     </div>
     <div class="card">
       <h2>${Number(m)}月度 発注金額集計（${fmtDateJP(start)}〜${fmtDateJP(end)}）</h2>
-      <div class="hint">社員CD・氏名・月間数量・月間発注金額を表示します。Excel出力・CSV出力も同じ形式で、対象者の「集計用部署名」ごと、メニューごとの月間合計数量・金額も併せて出力します（集計用部署名は対象者リストで設定してください。未設定の対象者は部署別集計に含まれません）。Excel出力では、メニューごとの発注者一覧を別シートに分けて出力します。</div>
+      <div class="hint">社員CD・氏名・月間数量・月間発注金額を表示します。Excel出力・CSV出力も同じ形式で、対象者の「集計用部署名」ごと、メニューごとの月間合計数量・金額も併せて出力します（集計用部署名は対象者リストで設定してください。未設定の対象者は部署別集計に含まれません）。Excel出力では、メニューごとに発注者一覧（個人別）と集計用部署名別の集計をまとめた別シートを追加します。</div>
       <div class="table-scroll">
       <table class="monthly-table">
         <tr>
@@ -1828,7 +1843,7 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   // 列5は社員別内訳の左右2列を区切るための空白列（常に狭い固定幅にする）
   ws.getColumn(5).width = 3;
 
-  // メニューごとに、そのメニューを発注した対象者一覧のシートを追加する
+  // メニューごとに、そのメニューを発注した対象者一覧（個人別）＋集計用部署名別の集計をまとめたシートを追加する
   (menuBreakdown||[]).forEach(menu=>{
     const mws = wb.addWorksheet(safeSheetName(menu.menuName), {
       pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: {left:0.5,right:0.5,top:0.5,bottom:0.5,header:0.2,footer:0.2} }
@@ -1848,8 +1863,26 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
     mws.mergeCells(mTotalRow.number, 1, mTotalRow.number, 2);
     styleDataRow(mTotalRow, true);
 
+    // 3行あける
+    mws.addRow([]); mws.addRow([]); mws.addRow([]);
+
+    const menuDeptTotals = aggregateMenuDeptTotals(menu.employees);
+    const mDeptTitleRow = mws.addRow(["集計用部署名別 集計"]);
+    mws.mergeCells(mDeptTitleRow.number, 1, mDeptTitleRow.number, 3);
+    mDeptTitleRow.font = { name: JP_FONT, bold:true, size:13 };
+
+    const mDeptHeaderRow = mws.addRow(["集計用部署名","数量","金額"]);
+    styleHeaderRow(mDeptHeaderRow);
+
+    menuDeptTotals.forEach(d=>{
+      const row = mws.addRow([d.dept, d.totalQty, d.totalAmount]);
+      styleDataRow(row, false);
+    });
+    const mDeptTotalRow = mws.addRow(["合計", menu.totalQty, menu.totalAmount]);
+    styleDataRow(mDeptTotalRow, true);
+
     mws.getColumn(4).numFmt = "¥#,##0";
-    autoFitColumns(mws, new Set([titleRow.number]));
+    autoFitColumns(mws, new Set([titleRow.number, mDeptTitleRow.number]));
   });
 
   const buf = await wb.xlsx.writeBuffer();
