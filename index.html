@@ -1630,6 +1630,43 @@ function renderMonthlyAdmin(container){
           <td>¥${grandTotal.toLocaleString()}</td>
         </tr>
       </table>` : ""}
+      ${monthlyGroups.length && monthlyMenuBreakdown.length ? `
+      <h2 style="margin-top:30px;">メニュー別 個人別・集計用部署名別集計</h2>
+      ${monthlyMenuBreakdown.map(menu=>{
+        const menuDeptTotals = aggregateMenuDeptTotals(menu.employees);
+        return `
+        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--border);">
+          <h3 style="margin:0 0 8px;color:var(--main-dark);">${menu.menuName}（数量: ${menu.totalQty} / 金額: ¥${menu.totalAmount.toLocaleString()}）</h3>
+          <div class="row" style="align-items:flex-start;gap:20px;flex-wrap:wrap;">
+            <table class="monthly-table" style="flex:1 1 260px;width:auto;">
+              <tr><th colspan="4" style="text-align:left;background:#f5f5f5;">個人別</th></tr>
+              <tr><th>社員CD</th><th>氏名</th><th>数量</th><th>金額</th></tr>
+              ${menu.employees.map(emp=>`
+                <tr>
+                  <td>${emp.code||""}</td>
+                  <td>${emp.name}</td>
+                  <td>${emp.totalQty}</td>
+                  <td>¥${emp.totalAmount.toLocaleString()}</td>
+                </tr>
+              `).join("")}
+              <tr class="total-row"><td colspan="2">合計</td><td>${menu.totalQty}</td><td>¥${menu.totalAmount.toLocaleString()}</td></tr>
+            </table>
+            <table class="monthly-table" style="flex:1 1 220px;width:auto;">
+              <tr><th colspan="3" style="text-align:left;background:#f5f5f5;">集計用部署名別</th></tr>
+              <tr><th>集計用部署名</th><th>数量</th><th>金額</th></tr>
+              ${menuDeptTotals.map(d=>`
+                <tr>
+                  <td>${d.dept}</td>
+                  <td>${d.totalQty}</td>
+                  <td>¥${d.totalAmount.toLocaleString()}</td>
+                </tr>
+              `).join("")}
+              <tr class="total-row"><td>合計</td><td>${menu.totalQty}</td><td>¥${menu.totalAmount.toLocaleString()}</td></tr>
+            </table>
+          </div>
+        </div>`;
+      }).join("")}
+      ` : ""}
     </div>
     <div class="no-print" style="margin-top:10px;">
       <button class="secondary" id="excelMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>Excel出力</button>
