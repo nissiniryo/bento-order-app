@@ -1476,9 +1476,10 @@ function fmtDateShort(dateStr){
 function aggregateOrdersByEmployeeDate(rawRows){
   const map = new Map();
   rawRows.forEach(r=>{
-    if(!map.has(r.employee_id)) map.set(r.employee_id, { code: r.code, name: r.name, dept: r.dept||"", aggDept: r.agg_dept||"", total: 0, totalQty: 0, byDate: {} });
+    if(!map.has(r.employee_id)) map.set(r.employee_id, { code: r.code, name: r.name, dept: r.dept||"", aggDept: r.agg_dept||"", total: 0, totalQty: 0, byDate: {}, byMenu: {} });
     const g = map.get(r.employee_id);
     g.byDate[r.date] = (g.byDate[r.date] || 0) + (r.amount || 0);
+    g.byMenu[r.menu_id] = (g.byMenu[r.menu_id] || 0) + (r.qty || 1);
     g.total += (r.amount || 0);
     g.totalQty += (r.qty || 1);
   });
@@ -1487,16 +1488,19 @@ function aggregateOrdersByEmployeeDate(rawRows){
   return groups;
 }
 
-// 社員別集計を「集計用部署名」ごとにまとめ、グループ単位の月間合計数量・合計金額を算出する
+// 社員別集計を「集計用部署名」ごとにまとめ、グループ単位の月間合計数量・合計金額（メニュー別数量を含む）を算出する
 // （集計用部署名が未設定の対象者は部署別集計には含めない）
 function aggregateDeptTotals(groups){
   const map = new Map();
   groups.filter(g=> g.aggDept).forEach(g=>{
     const key = g.aggDept;
-    if(!map.has(key)) map.set(key, { dept: key, totalQty: 0, totalAmount: 0 });
+    if(!map.has(key)) map.set(key, { dept: key, totalQty: 0, totalAmount: 0, byMenu: {} });
     const d = map.get(key);
     d.totalQty += g.totalQty;
     d.totalAmount += g.total;
+    Object.keys(g.byMenu||{}).forEach(menuId=>{
+      d.byMenu[menuId] = (d.byMenu[menuId] || 0) + g.byMenu[menuId];
+    });
   });
   return [...map.values()].sort((a,b)=> a.dept.localeCompare(b.dept, "ja"));
 }
@@ -1574,11 +1578,12 @@ function renderMonthlyAdmin(container){
     </div>
     <div class="card">
       <h2>${Number(m)}月度 発注金額集計（${fmtDateJP(start)}〜${fmtDateJP(end)}）</h2>
-      <div class="hint">社員CD・氏名・月間数量・月間発注金額を表示します。Excel出力・CSV出力も同じ形式で、対象者の「集計用部署名」ごと、メニューごとの月間合計数量・金額も併せて出力します（集計用部署名は対象者リストで設定してください。未設定の対象者は部署別集計に含まれません）。Excel出力では、メニューごとに発注者一覧（個人別）と集計用部署名別の集計をまとめた別シートを追加します。</div>
+      <div class="hint">社員CD・氏名・月間数量・月間発注金額に続けて、メニューごとの月間発注数量を表示します。Excel出力・CSV出力も同じ形式で、対象者の「集計用部署名」ごと、メニューごとの月間合計数量・金額も併せて出力します（集計用部署名は対象者リストで設定してください。未設定の対象者は部署別集計に含まれません）。Excel出力では、メニューごとに発注者一覧（個人別）と集計用部署名別の集計をまとめた別シートを追加します。</div>
       <div class="table-scroll">
       <table class="monthly-table">
         <tr>
           <th>社員CD</th><th>氏名</th><th>月間数量</th><th>月間発注金額</th>
+          ${state.menu.map(mn=>`<th>${mn.name}</th>`).join("")}
         </tr>
         ${monthlyGroups.length ? monthlyGroups.map(g=>`
           <tr>
@@ -1586,31 +1591,35 @@ function renderMonthlyAdmin(container){
             <td>${g.name}</td>
             <td>${g.totalQty}</td>
             <td>¥${g.total.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${(g.byMenu && g.byMenu[mn.id]) || 0}</td>`).join("")}
           </tr>
-        `).join("") : `<tr><td colspan="4" class="hint">「集計する」を押してください</td></tr>`}
+        `).join("") : `<tr><td colspan="${4+state.menu.length}" class="hint">「集計する」を押してください</td></tr>`}
         ${monthlyGroups.length ? `
           <tr class="total-row">
             <td colspan="2">合計</td>
             <td>${grandTotalQty}</td>
             <td>¥${grandTotal.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id]) || 0), 0)}</td>`).join("")}
           </tr>` : ""}
       </table>
       </div>
       ${monthlyGroups.length ? `
       <h2 style="margin-top:30px;">集計用部署名別 月間合計数量・金額</h2>
       <table class="monthly-table">
-        <tr><th>集計用部署名</th><th>月間合計数量</th><th>月間合計金額</th></tr>
+        <tr><th>集計用部署名</th><th>月間合計数量</th><th>月間合計金額</th>${state.menu.map(mn=>`<th>${mn.name}</th>`).join("")}</tr>
         ${deptTotals.map(d=>`
           <tr>
             <td>${d.dept}</td>
             <td>${d.totalQty}</td>
             <td>¥${d.totalAmount.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${(d.byMenu && d.byMenu[mn.id]) || 0}</td>`).join("")}
           </tr>
         `).join("")}
         <tr class="total-row">
           <td>合計</td>
           <td>${grandTotalQty}</td>
           <td>¥${grandTotal.toLocaleString()}</td>
+          ${state.menu.map(mn=>`<td>${deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id]) || 0), 0)}</td>`).join("")}
         </tr>
       </table>` : ""}
       ${monthlyGroups.length ? `
@@ -1630,43 +1639,6 @@ function renderMonthlyAdmin(container){
           <td>¥${grandTotal.toLocaleString()}</td>
         </tr>
       </table>` : ""}
-      ${monthlyGroups.length && monthlyMenuBreakdown.length ? `
-      <h2 style="margin-top:30px;">メニュー別 個人別・集計用部署名別集計</h2>
-      ${monthlyMenuBreakdown.map(menu=>{
-        const menuDeptTotals = aggregateMenuDeptTotals(menu.employees);
-        return `
-        <div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--border);">
-          <h3 style="margin:0 0 8px;color:var(--main-dark);">${menu.menuName}（数量: ${menu.totalQty} / 金額: ¥${menu.totalAmount.toLocaleString()}）</h3>
-          <div class="row" style="align-items:flex-start;gap:20px;flex-wrap:wrap;">
-            <table class="monthly-table" style="flex:1 1 260px;width:auto;">
-              <tr><th colspan="4" style="text-align:left;background:#f5f5f5;">個人別</th></tr>
-              <tr><th>社員CD</th><th>氏名</th><th>数量</th><th>金額</th></tr>
-              ${menu.employees.map(emp=>`
-                <tr>
-                  <td>${emp.code||""}</td>
-                  <td>${emp.name}</td>
-                  <td>${emp.totalQty}</td>
-                  <td>¥${emp.totalAmount.toLocaleString()}</td>
-                </tr>
-              `).join("")}
-              <tr class="total-row"><td colspan="2">合計</td><td>${menu.totalQty}</td><td>¥${menu.totalAmount.toLocaleString()}</td></tr>
-            </table>
-            <table class="monthly-table" style="flex:1 1 220px;width:auto;">
-              <tr><th colspan="3" style="text-align:left;background:#f5f5f5;">集計用部署名別</th></tr>
-              <tr><th>集計用部署名</th><th>数量</th><th>金額</th></tr>
-              ${menuDeptTotals.map(d=>`
-                <tr>
-                  <td>${d.dept}</td>
-                  <td>${d.totalQty}</td>
-                  <td>¥${d.totalAmount.toLocaleString()}</td>
-                </tr>
-              `).join("")}
-              <tr class="total-row"><td>合計</td><td>${menu.totalQty}</td><td>¥${menu.totalAmount.toLocaleString()}</td></tr>
-            </table>
-          </div>
-        </div>`;
-      }).join("")}
-      ` : ""}
     </div>
     <div class="no-print" style="margin-top:10px;">
       <button class="secondary" id="excelMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>Excel出力</button>
@@ -1695,33 +1667,34 @@ function renderMonthlyAdmin(container){
       if(typeof ExcelJS === "undefined"){
         throw new Error("Excel出力に必要な部品の読み込みに失敗しました。社内ネットワークの制限などでインターネット上の部品（cdnjs.cloudflare.com）に接続できていない可能性があります。下の「CSV出力」を代わりにお使いください。");
       }
-      await exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuBreakdown: monthlyMenuBreakdown, grandTotal, grandTotalQty });
+      await exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuBreakdown: monthlyMenuBreakdown, menuList: state.menu, grandTotal, grandTotalQty });
     }catch(err){
       alert("Excel出力でエラーが発生しました: " + (err && err.message ? err.message : err));
     }
   };
   container.querySelector("#csvMonthlyBtn").onclick = ()=>{
     if(!monthlyGroups.length) return;
-    exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, grandTotal, grandTotalQty });
+    exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuList: state.menu, grandTotal, grandTotalQty });
   };
 }
 
 // Excel出力が使えない環境向けの予備出力（外部ライブラリ不要のCSV）。内容はExcel出力と同じ。
-function exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals, grandTotal, grandTotalQty }){
+function exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals, menuList, grandTotal, grandTotalQty }){
+  const menus = menuList||[];
   const lines = [];
-  lines.push(["社員CD","氏名","月間数量","月間発注金額"].join(","));
+  lines.push(["社員CD","氏名","月間数量","月間発注金額", ...menus.map(mn=>mn.name)].join(","));
   monthlyGroups.forEach(g=>{
-    lines.push([g.code||"", g.name, g.totalQty, g.total].join(","));
+    lines.push([g.code||"", g.name, g.totalQty, g.total, ...menus.map(mn=> (g.byMenu && g.byMenu[mn.id]) || 0)].join(","));
   });
-  lines.push(["合計","", grandTotalQty, grandTotal].join(","));
+  lines.push(["合計","", grandTotalQty, grandTotal, ...menus.map(mn=> monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id])||0), 0))].join(","));
   lines.push("");
   lines.push("");
   lines.push("集計用部署名別 月間合計数量・金額");
-  lines.push(["集計用部署名","月間合計数量","月間合計金額"].join(","));
+  lines.push(["集計用部署名","月間合計数量","月間合計金額", ...menus.map(mn=>mn.name)].join(","));
   deptTotals.forEach(d=>{
-    lines.push([d.dept, d.totalQty, d.totalAmount].join(","));
+    lines.push([d.dept, d.totalQty, d.totalAmount, ...menus.map(mn=> (d.byMenu && d.byMenu[mn.id]) || 0)].join(","));
   });
-  lines.push(["合計", grandTotalQty, grandTotal].join(","));
+  lines.push(["合計", grandTotalQty, grandTotal, ...menus.map(mn=> deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id])||0), 0))].join(","));
   lines.push("");
   lines.push("");
   lines.push("メニュー別 月間合計数量・金額");
@@ -1736,7 +1709,8 @@ function exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals, gr
 // 月次集計をA4縦向き・表形式のExcelファイル(.xlsx)として出力する
 // （メイン集計シート: 社員別内訳を左右2列に分けて表示し、その下に部署別・メニュー別集計をまとめる。
 //   さらにメニューごとに、そのメニューを発注した対象者一覧をまとめた専用シートを追加する）
-async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals, menuBreakdown, grandTotal, grandTotalQty }){
+async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals, menuBreakdown, menuList, grandTotal, grandTotalQty }){
+  const menus = menuList||[];
   const wb = new ExcelJS.Workbook();
 
   // 日本語がどの環境でも文字化け・表示崩れなく表示されるよう、全セル共通のフォントを明示的に指定する
@@ -1813,27 +1787,37 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
     pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: {left:0.5,right:0.5,top:0.5,bottom:0.5,header:0.2,footer:0.2} }
   });
 
-  // 社員別内訳を左右2列（列1-4 と 列6-9、列5は間隔用の空白列）に分けて表示する
+  // 社員別内訳を左右2列に分けて表示する（各列: 社員CD,氏名,月間数量,月間発注金額,メニュー別数量…／間に空白列）
+  const blockWidth = 4 + menus.length; // 1ブロックの列数
+  const gapCol = blockWidth + 1;
+  const rightStart = gapCol + 1;
+  const leftAmountCol = 4;
+  const rightAmountCol = rightStart + 3;
+
   const half = Math.ceil(monthlyGroups.length / 2);
   const leftGroups = monthlyGroups.slice(0, half);
   const rightGroups = monthlyGroups.slice(half);
 
-  const h1 = ws.addRow(["社員CD","氏名","月間数量","月間発注金額","","社員CD","氏名","月間数量","月間発注金額"]);
-  styleHeaderRow(h1, new Set([5]));
+  const menuNameCells = menus.map(mn=>mn.name);
+  const h1 = ws.addRow(["社員CD","氏名","月間数量","月間発注金額", ...menuNameCells, "", "社員CD","氏名","月間数量","月間発注金額", ...menuNameCells]);
+  styleHeaderRow(h1, new Set([gapCol]));
 
   const empRowCount = Math.max(leftGroups.length, rightGroups.length);
   for(let i=0;i<empRowCount;i++){
     const l = leftGroups[i];
     const r = rightGroups[i];
+    const leftMenuQtys = menus.map(mn=> l ? ((l.byMenu && l.byMenu[mn.id]) || 0) : "");
+    const rightMenuQtys = menus.map(mn=> r ? ((r.byMenu && r.byMenu[mn.id]) || 0) : "");
     const row = ws.addRow([
-      l ? (l.code||"") : "", l ? l.name : "", l ? l.totalQty : "", l ? l.total : "",
+      l ? (l.code||"") : "", l ? l.name : "", l ? l.totalQty : "", l ? l.total : "", ...leftMenuQtys,
       "",
-      r ? (r.code||"") : "", r ? r.name : "", r ? r.totalQty : "", r ? r.total : ""
+      r ? (r.code||"") : "", r ? r.name : "", r ? r.totalQty : "", r ? r.total : "", ...rightMenuQtys
     ]);
-    styleDataRow(row, false, new Set([5]));
+    styleDataRow(row, false, new Set([gapCol]));
   }
 
-  const totalRow = ws.addRow(["合計","", grandTotalQty, grandTotal]);
+  const totalRowValues = ["合計","", grandTotalQty, grandTotal, ...menus.map(mn=> monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id])||0), 0))];
+  const totalRow = ws.addRow(totalRowValues);
   ws.mergeCells(totalRow.number, 1, totalRow.number, 2);
   styleDataRow(totalRow, true);
 
@@ -1841,17 +1825,17 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   ws.addRow([]); ws.addRow([]); ws.addRow([]);
 
   const deptTitleRow = ws.addRow(["集計用部署名別 月間合計数量・金額"]);
-  ws.mergeCells(deptTitleRow.number, 1, deptTitleRow.number, 3);
+  ws.mergeCells(deptTitleRow.number, 1, deptTitleRow.number, 3 + menus.length);
   deptTitleRow.font = { name: JP_FONT, bold:true, size:13 };
 
-  const deptHeaderRow = ws.addRow(["集計用部署名","月間合計数量","月間合計金額"]);
+  const deptHeaderRow = ws.addRow(["集計用部署名","月間合計数量","月間合計金額", ...menuNameCells]);
   styleHeaderRow(deptHeaderRow);
 
   deptTotals.forEach(d=>{
-    const row = ws.addRow([d.dept, d.totalQty, d.totalAmount]);
+    const row = ws.addRow([d.dept, d.totalQty, d.totalAmount, ...menus.map(mn=> (d.byMenu && d.byMenu[mn.id]) || 0)]);
     styleDataRow(row, false);
   });
-  const deptTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal]);
+  const deptTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal, ...menus.map(mn=> deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id])||0), 0))]);
   styleDataRow(deptTotalRow, true);
 
   // 3行あける
@@ -1871,14 +1855,14 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   const menuTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal]);
   styleDataRow(menuTotalRow, true);
 
-  // 金額列に通貨書式を設定（社員別内訳は左右2列あるため、列4と列9の両方に設定）
-  ws.getColumn(4).numFmt = "¥#,##0";
-  ws.getColumn(9).numFmt = "¥#,##0";
+  // 金額列に通貨書式を設定（社員別内訳は左右2列あるため、左右それぞれの金額列に設定）
+  ws.getColumn(leftAmountCol).numFmt = "¥#,##0";
+  ws.getColumn(rightAmountCol).numFmt = "¥#,##0";
 
   const titleRowNumbers = new Set([deptTitleRow.number, menuTitleRow.number]);
   autoFitColumns(ws, titleRowNumbers);
-  // 列5は社員別内訳の左右2列を区切るための空白列（常に狭い固定幅にする）
-  ws.getColumn(5).width = 3;
+  // 間の空白列は社員別内訳の左右2列を区切るための列（常に狭い固定幅にする）
+  ws.getColumn(gapCol).width = 3;
 
   // メニューごとに、そのメニューを発注した対象者一覧（個人別）＋集計用部署名別の集計をまとめたシートを追加する
   (menuBreakdown||[]).forEach(menu=>{
