@@ -1814,12 +1814,15 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
       r ? (r.code||"") : "", r ? r.name : "", r ? r.totalQty : "", r ? r.total : "", ...rightMenuQtys
     ]);
     styleDataRow(row, false, new Set([gapCol]));
+    row.getCell(leftAmountCol).numFmt = "¥#,##0";
+    row.getCell(rightAmountCol).numFmt = "¥#,##0";
   }
 
   const totalRowValues = ["合計","", grandTotalQty, grandTotal, ...menus.map(mn=> monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id])||0), 0))];
   const totalRow = ws.addRow(totalRowValues);
   ws.mergeCells(totalRow.number, 1, totalRow.number, 2);
   styleDataRow(totalRow, true);
+  totalRow.getCell(leftAmountCol).numFmt = "¥#,##0";
 
   // 3行あける
   ws.addRow([]); ws.addRow([]); ws.addRow([]);
@@ -1834,9 +1837,11 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   deptTotals.forEach(d=>{
     const row = ws.addRow([d.dept, d.totalQty, d.totalAmount, ...menus.map(mn=> (d.byMenu && d.byMenu[mn.id]) || 0)]);
     styleDataRow(row, false);
+    row.getCell(3).numFmt = "¥#,##0";
   });
   const deptTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal, ...menus.map(mn=> deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id])||0), 0))]);
   styleDataRow(deptTotalRow, true);
+  deptTotalRow.getCell(3).numFmt = "¥#,##0";
 
   // 3行あける
   ws.addRow([]); ws.addRow([]); ws.addRow([]);
@@ -1851,13 +1856,11 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   (menuTotals||[]).forEach(mt=>{
     const row = ws.addRow([mt.menuName, mt.totalQty, mt.totalAmount]);
     styleDataRow(row, false);
+    row.getCell(3).numFmt = "¥#,##0";
   });
   const menuTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal]);
   styleDataRow(menuTotalRow, true);
-
-  // 金額列に通貨書式を設定（社員別内訳は左右2列あるため、左右それぞれの金額列に設定）
-  ws.getColumn(leftAmountCol).numFmt = "¥#,##0";
-  ws.getColumn(rightAmountCol).numFmt = "¥#,##0";
+  menuTotalRow.getCell(3).numFmt = "¥#,##0";
 
   const titleRowNumbers = new Set([deptTitleRow.number, menuTitleRow.number]);
   autoFitColumns(ws, titleRowNumbers);
@@ -1879,10 +1882,12 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
     menu.employees.forEach(emp=>{
       const row = mws.addRow([emp.code||"", emp.name, emp.totalQty, emp.totalAmount]);
       styleDataRow(row, false);
+      row.getCell(4).numFmt = "¥#,##0";
     });
     const mTotalRow = mws.addRow(["合計","", menu.totalQty, menu.totalAmount]);
     mws.mergeCells(mTotalRow.number, 1, mTotalRow.number, 2);
     styleDataRow(mTotalRow, true);
+    mTotalRow.getCell(4).numFmt = "¥#,##0";
 
     // 3行あける
     mws.addRow([]); mws.addRow([]); mws.addRow([]);
@@ -1898,11 +1903,12 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
     menuDeptTotals.forEach(d=>{
       const row = mws.addRow([d.dept, d.totalQty, d.totalAmount]);
       styleDataRow(row, false);
+      row.getCell(3).numFmt = "¥#,##0";
     });
     const mDeptTotalRow = mws.addRow(["合計", menu.totalQty, menu.totalAmount]);
     styleDataRow(mDeptTotalRow, true);
+    mDeptTotalRow.getCell(3).numFmt = "¥#,##0";
 
-    mws.getColumn(4).numFmt = "¥#,##0";
     autoFitColumns(mws, new Set([titleRow.number, mDeptTitleRow.number]));
   });
 
