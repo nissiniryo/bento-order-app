@@ -526,6 +526,8 @@ function renderOrderTab(){
   const dates = datesInPeriod(calendarYearMonth);
   const {start: periodStart, end: periodEnd} = periodRange(calendarYearMonth);
   const [ymYear, ymMonth] = calendarYearMonth.split("-");
+  // 給与天引きは、その月度の発注分が翌月の給与で天引きされる（例: 9月度の発注 → 10月度給与天引き）
+  const [deductionYear, deductionMonth] = shiftMonth(calendarYearMonth, 1).split("-");
 
   const orderedDates = dates.filter(d=> existingMenuFor(session.employeeId, d));
   const monthlyTotalAmount = orderedDates.reduce((sum, d)=>{
@@ -617,7 +619,7 @@ function renderOrderTab(){
     </div>
 
     <div class="card">
-      <h2>${ymYear}年${Number(ymMonth)}月度の発注回数・金額（${Number(ymMonth)}月度給与天引き）</h2>
+      <h2>${ymYear}年${Number(ymMonth)}月度の発注回数・金額（${Number(deductionYear)!==Number(ymYear) ? `${deductionYear}年` : ""}${Number(deductionMonth)}月度給与天引き）</h2>
       <table>
         <tr><th>発注数量</th><th>金額</th></tr>
         <tr><td>${monthlyTotalQty}</td><td>¥${monthlyTotalAmount.toLocaleString()}</td></tr>
