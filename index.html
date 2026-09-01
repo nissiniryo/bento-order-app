@@ -210,7 +210,8 @@ let state = {
   orders: {},     // キャッシュ: { "YYYY-MM-DD": { employeeId: menuId } }（ログイン中の本人の分のみ）
   employees: [],  // 管理タブ「対象者リスト」を開いたときだけ取得
   adminMenu: [],  // 管理タブ「メニュー管理」用（FAX番号を含む。発注画面のstate.menuとは別に保持）
-  menuPdfList: [] // 管理タブ「メニュー管理」用: 登録済み献立PDFの月度一覧（PDF本体は含まない）
+  menuPdfList: [], // 管理タブ「メニュー管理」用: 登録済み献立PDFの一覧（月度・メニューごと。PDF本体は含まない）
+  menuPdfsForMonth: [] // 発注画面用: 現在表示中の月度に登録済みの献立PDF一覧（メニューごと）
 };
 
 const SESSION_STORAGE_KEY = "bentoAppSession_v1";
@@ -293,6 +294,12 @@ async function loadMyOrdersForMonth(periodYm){
     if(!state.orders[r.date]) state.orders[r.date] = {};
     state.orders[r.date][session.employeeId] = { menuId: r.menu_id, qty: r.qty || 1 };
   });
+  // その月度に登録済みの献立PDF一覧（メニューごと）も一緒に取得しておく
+  try{
+    state.menuPdfsForMonth = await sbRpc("rpc_get_menu_pdfs_for_month", {p_token: session.token, p_ym: periodYm});
+  }catch(e){
+    state.menuPdfsForMonth = [];
+  }
 }
 
 // 管理者による代理発注用: 指定した社員の、指定した発注月度の発注情報を取得する（同じstate.ordersキャッシュに格納する）
@@ -556,9 +563,10 @@ function renderOrderTab(){
         <button class="secondary" id="nextMonthBtn" style="flex:0 0 auto;">次月度 →</button>
       </div>
       <div class="hint">締切ルール：${state.deadline.daysBefore>0 ? `対象日の${state.deadline.daysBefore}日前 ${state.deadline.time} まで` : `当日${state.deadline.time}まで`}</div>
-      <div class="row" style="margin-top:8px;">
-        <button class="secondary" id="viewMenuPdfBtn" style="flex:0 0 auto;">献立を確認する</button>
-      </div>
+      ${(state.menuPdfsForMonth||[]).length ? `
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;">
+        ${state.menuPdfsForMonth.map(p=>`<button class="secondary" data-view-menu-pdf="${p.menu_id}" style="flex:0 0 auto;">献立を確認する（${p.menu_name}）</button>`).join("")}
+      </div>` : `<div class="hint">この月度の献立PDFはまだ登録されていません。</div>`}
     </div>
 
     <div class="card">
@@ -645,15 +653,17 @@ function renderOrderTab(){
     batchMessage="";
     withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
   };
-  document.getElementById("viewMenuPdfBtn").onclick = ()=>{
-    withLoading(async ()=>{
-      try{
-        const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: calendarYearMonth});
-        if(!rows || !rows.length){ alert("この月度の献立PDFはまだ登録されていません"); return; }
-        openPdfFromBase64(rows[0].pdf_data);
-      }catch(e){ alert(friendlyError(e)); }
-    });
-  };
+  document.querySelectorAll("[data-view-menu-pdf]").forEach(btn=>{
+    btn.onclick = ()=>{
+      withLoading(async ()=>{
+        try{
+          const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: calendarYearMonth, p_menu_id: btn.dataset.viewMenuPdf});
+          if(!rows || !rows.length){ alert("この献立PDFは見つかりませんでした"); return; }
+          openPdfFromBase64(rows[0].pdf_data);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
 
   // 今の発注月度を表示している場合、本日の行が見える位置まで自動スクロール
   if(calendarYearMonth === periodLabelFor(todayStr())){
@@ -1167,9 +1177,12 @@ function renderMenuAdmin(container){
     </div>
     <div class="card">
       <h2>月別献立PDFの登録</h2>
-      <div class="hint">対象月度（発注月度：21日始まり20日締め）を選んでPDFを登録すると、発注画面の「献立を確認する」ボタンからその月度の献立表を確認できるようになります。同じ月度に再登録すると上書きされます。</div>
+      <div class="hint">対象月度（発注月度：21日始まり20日締め）とメニューを選んでPDFを登録すると、発注画面の「献立を確認する（メニュー名）」ボタンからそのメニューの献立表を確認できるようになります。同じ月度・メニューの組み合わせに再登録すると上書きされます。</div>
       <div class="row" style="margin-top:8px;">
         <input type="month" id="menuPdfYm" value="${calendarYearMonth}">
+        <select id="menuPdfMenuId">
+          ${list.length ? list.map(m=>`<option value="${m.id}">${m.name}</option>`).join("") : `<option value="">（メニューが登録されていません）</option>`}
+        </select>
         <input type="file" id="menuPdfFile" accept="application/pdf">
         <button class="secondary" id="uploadMenuPdfBtn" style="flex:0 0 auto;">登録</button>
       </div>
@@ -1177,17 +1190,18 @@ function renderMenuAdmin(container){
     <div class="card">
       <h2>登録済み献立PDF一覧（${(state.menuPdfList||[]).length}件）</h2>
       <table>
-        <tr><th>月度</th><th>ファイル名</th><th>登録日時</th><th class="no-print">操作</th></tr>
+        <tr><th>月度</th><th>メニュー</th><th>ファイル名</th><th>登録日時</th><th class="no-print">操作</th></tr>
         ${(state.menuPdfList||[]).length ? state.menuPdfList.map(p=>`
           <tr>
             <td>${p.ym}</td>
+            <td>${p.menu_name||""}</td>
             <td>${p.filename||""}</td>
             <td>${p.updated_at ? new Date(p.updated_at).toLocaleString("ja-JP") : ""}</td>
             <td class="no-print">
-              <button class="secondary" data-view-pdf="${p.ym}">確認</button>
-              <button class="danger" data-del-pdf="${p.ym}">削除</button>
+              <button class="secondary" data-view-pdf="${p.ym}" data-view-pdf-menu="${p.menu_id}">確認</button>
+              <button class="danger" data-del-pdf="${p.ym}" data-del-pdf-menu="${p.menu_id}">削除</button>
             </td>
-          </tr>`).join("") : `<tr><td colspan="4" class="hint">まだ登録されていません</td></tr>`}
+          </tr>`).join("") : `<tr><td colspan="5" class="hint">まだ登録されていません</td></tr>`}
       </table>
     </div>
   `;
@@ -1236,15 +1250,17 @@ function renderMenuAdmin(container){
 
   container.querySelector("#uploadMenuPdfBtn").onclick = ()=>{
     const ym = container.querySelector("#menuPdfYm").value;
+    const menuId = container.querySelector("#menuPdfMenuId").value;
     const fileInput = container.querySelector("#menuPdfFile");
     const file = fileInput.files[0];
     if(!ym){ alert("対象月度を選択してください"); return; }
+    if(!menuId){ alert("メニューを選択してください"); return; }
     if(!file){ alert("PDFファイルを選択してください"); return; }
     if(file.type !== "application/pdf"){ alert("PDFファイルを選択してください"); return; }
     withLoading(async ()=>{
       try{
         const base64 = await fileToBase64(file);
-        await sbRpc("rpc_admin_upsert_menu_pdf", {p_token: session.token, p_ym: ym, p_filename: file.name, p_pdf_base64: base64});
+        await sbRpc("rpc_admin_upsert_menu_pdf", {p_token: session.token, p_ym: ym, p_menu_id: menuId, p_filename: file.name, p_pdf_base64: base64});
         state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
         renderMenuAdmin(container);
       }catch(e){ alert(friendlyError(e)); }
@@ -1255,8 +1271,8 @@ function renderMenuAdmin(container){
     btn.onclick = ()=>{
       withLoading(async ()=>{
         try{
-          const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: btn.dataset.viewPdf});
-          if(!rows || !rows.length){ alert("この月度の献立PDFは登録されていません"); return; }
+          const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: btn.dataset.viewPdf, p_menu_id: btn.dataset.viewPdfMenu});
+          if(!rows || !rows.length){ alert("この献立PDFは見つかりませんでした"); return; }
           openPdfFromBase64(rows[0].pdf_data);
         }catch(e){ alert(friendlyError(e)); }
       });
@@ -1268,7 +1284,7 @@ function renderMenuAdmin(container){
       if(!confirm(`${btn.dataset.delPdf} の献立PDFを削除しますか？`)) return;
       withLoading(async ()=>{
         try{
-          await sbRpc("rpc_admin_delete_menu_pdf", {p_token: session.token, p_ym: btn.dataset.delPdf});
+          await sbRpc("rpc_admin_delete_menu_pdf", {p_token: session.token, p_ym: btn.dataset.delPdf, p_menu_id: btn.dataset.delPdfMenu});
           state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
           renderMenuAdmin(container);
         }catch(e){ alert(friendlyError(e)); }
