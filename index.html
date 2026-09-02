@@ -627,7 +627,7 @@ function renderOrderTab(){
     </div>
 
     <div class="card">
-      <h2>${ymYear}年${Number(ymMonth)}月度の発注回数・金額（${Number(deductionYear)!==Number(ymYear) ? `${deductionYear}年` : ""}${Number(deductionMonth)}月度給与天引き）</h2>
+      <h2>${ymYear}年${Number(ymMonth)}月度の発注回数・金額（${Number(deductionYear)!==Number(ymYear) ? `${deductionYear}年` : ""}${Number(deductionMonth)}月給与天引き）</h2>
       <table>
         <tr><th>発注数量</th><th>金額</th></tr>
         <tr><td>${monthlyTotalQty}</td><td>¥${monthlyTotalAmount.toLocaleString()}</td></tr>
