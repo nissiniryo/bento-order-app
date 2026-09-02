@@ -211,7 +211,9 @@ let state = {
   employees: [],  // 管理タブ「対象者リスト」を開いたときだけ取得
   adminMenu: [],  // 管理タブ「メニュー管理」用（FAX番号を含む。発注画面のstate.menuとは別に保持）
   menuPdfList: [], // 管理タブ「メニュー管理」用: 登録済み献立PDFの一覧（月度・メニューごと。PDF本体は含まない）
-  menuPdfsForMonth: [] // 発注画面用: 現在表示中の月度に登録済みの献立PDF一覧（メニューごと）
+  menuPdfsForMonth: [], // 発注画面用: 現在表示中の月度に登録済みの献立PDF一覧（メニューごと）
+  menuBlockedDates: {}, // 発注画面用: メニュー別の発注不可日 { menuId: ["YYYY-MM-DD", ...] }
+  menuBlockedDatesAdmin: [] // 管理タブ「メニュー管理」用: メニュー別発注不可日の一覧（メニュー名付き）
 };
 
 const SESSION_STORAGE_KEY = "bentoAppSession_v1";
@@ -262,6 +264,23 @@ async function loadSettings(){
   state.deadline = { daysBefore: s.deadline_days_before, time: s.deadline_time };
   state.blockedDates = s.blocked_dates || [];
   state.blockedWeekdays = s.blocked_weekdays || [];
+  await loadMenuBlockedDates();
+}
+
+// メニュー別の発注不可日を取得し、{ menuId: ["YYYY-MM-DD", ...] } の形にまとめる
+async function loadMenuBlockedDates(){
+  const rows = await sbRpc("rpc_get_menu_blocked_dates", {p_token: session.token});
+  const map = {};
+  (rows||[]).forEach(r=>{
+    if(!map[r.menu_id]) map[r.menu_id] = [];
+    map[r.menu_id].push(r.date);
+  });
+  state.menuBlockedDates = map;
+}
+
+// 指定メニューが指定日に休止（発注不可）かどうか
+function isMenuBlockedDate(menuId, dateStr){
+  return (state.menuBlockedDates[menuId] || []).includes(dateStr);
 }
 
 // 締切設定・発注不可日・発注不可曜日をまとめて保存する（overridesで指定した項目だけ変更する）
@@ -610,10 +629,15 @@ function renderOrderTab(){
           return `<tr class="${todayCls.trim()}"${rowIdAttr}>
             <td>${fmtDateJP(d)}${todayMark}</td>
             <td><span style="color:var(--ok);">受付中</span></td>
-            ${state.menu.map(m=>`
+            ${state.menu.map(m=>{
+              const menuBlocked = isMenuBlockedDate(m.id, d) && existing!==m.id;
+              return `
               <td class="checkbox-col" style="width:auto;text-align:center;">
-                <input type="checkbox" class="calCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>
-              </td>`).join("")}
+                ${menuBlocked
+                  ? `<span class="hint" style="margin:0;">休止</span>`
+                  : `<input type="checkbox" class="calCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>`}
+              </td>`;
+            }).join("")}
             <td class="checkbox-col" style="width:56px;">
               <input type="number" class="calQtyInput" data-date="${d}" min="1" value="${existing ? existingQty : ""}" style="width:52px;padding:4px;">
             </td>
@@ -782,6 +806,7 @@ async function loadAdminSubData(sub){
     const rows = await sbRpc("rpc_admin_list_menu", {p_token: session.token});
     state.adminMenu = rows.map(mapMenuAdmin);
     state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
+    state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
   } else if(sub === "summary"){
     summaryRows = await sbRpc("rpc_admin_orders_for_date", {p_token: session.token, p_date: summaryDate});
   } else if(sub === "receipt"){
@@ -1149,6 +1174,22 @@ function renderMenuAdmin(container){
   const list = state.adminMenu || [];
   const blocked = [...(state.blockedDates||[])].sort();
   const blockedGroups = groupConsecutiveDates(blocked);
+
+  // メニュー別発注不可日: メニューごとにグループ化し、連続した日付は範囲表示にまとめる
+  const menuBlockedByMenu = {};
+  (state.menuBlockedDatesAdmin||[]).forEach(r=>{
+    if(!menuBlockedByMenu[r.menu_id]) menuBlockedByMenu[r.menu_id] = { menuName: r.menu_name, dates: [] };
+    menuBlockedByMenu[r.menu_id].dates.push(r.date);
+  });
+  const menuBlockedGroupsFlat = [];
+  Object.keys(menuBlockedByMenu).forEach(menuId=>{
+    const entry = menuBlockedByMenu[menuId];
+    const sortedDates = [...entry.dates].sort();
+    groupConsecutiveDates(sortedDates).forEach(([s,e])=>{
+      menuBlockedGroupsFlat.push({ menuId, menuName: entry.menuName, s, e });
+    });
+  });
+
   container.innerHTML = `
     <div class="card">
       <h2>弁当メニューを追加</h2>
@@ -1208,7 +1249,14 @@ function renderMenuAdmin(container){
     </div>
     <div class="card">
       <h2>発注不可日</h2>
-      <div class="hint">指定した日付は発注画面でグレー表示になり発注できません（祝日は自動で発注不可になります）</div>
+      <div class="hint">指定した日付は発注画面でグレー表示になり発注できません（祝日は自動で発注不可になります）。「全メニュー」を選ぶと従来通り全てのメニューが発注不可になり、特定のメニューを選ぶとそのメニューだけが休止になります（他のメニューは通常通り発注できます）。</div>
+      <div class="row" style="align-items:center;margin-top:8px;">
+        <label style="flex:0 0 auto;margin:0;">対象</label>
+        <select id="blockedScope">
+          <option value="all">全メニュー</option>
+          ${list.map(m=>`<option value="${m.id}">${m.name}のみ</option>`).join("")}
+        </select>
+      </div>
       <div class="row" style="margin-top:8px;">
         <input type="date" id="newBlockedDate">
         <button class="secondary" id="addBlockedDateBtn" style="flex:0 0 auto;">追加</button>
@@ -1220,6 +1268,7 @@ function renderMenuAdmin(container){
         <input type="date" id="rangeBlockedEnd">
         <button class="secondary" id="addBlockedRangeBtn" style="flex:0 0 auto;">期間で追加</button>
       </div>
+      <h3 style="margin-top:20px;">全メニュー共通の発注不可日</h3>
       <table style="margin-top:10px;">
         <tr><th>日付</th><th class="no-print">操作</th></tr>
         ${blockedGroups.length ? blockedGroups.map(([s,e])=>`
@@ -1227,6 +1276,16 @@ function renderMenuAdmin(container){
             <td>${s===e ? fmtDateJP(s) : `${fmtDateJP(s)} 〜 ${fmtDateJP(e)}`}</td>
             <td class="no-print"><button class="danger" data-del-range-start="${s}" data-del-range-end="${e}">削除</button></td>
           </tr>`).join("") : `<tr><td colspan="2" class="hint">登録されている発注不可日はありません</td></tr>`}
+      </table>
+      <h3 style="margin-top:20px;">メニュー別の発注不可日</h3>
+      <table style="margin-top:10px;">
+        <tr><th>メニュー</th><th>日付</th><th class="no-print">操作</th></tr>
+        ${menuBlockedGroupsFlat.length ? menuBlockedGroupsFlat.map(({menuId, menuName, s, e})=>`
+          <tr>
+            <td>${menuName}</td>
+            <td>${s===e ? fmtDateJP(s) : `${fmtDateJP(s)} 〜 ${fmtDateJP(e)}`}</td>
+            <td class="no-print"><button class="danger" data-del-menu-range-menu="${menuId}" data-del-menu-range-start="${s}" data-del-menu-range-end="${e}">削除</button></td>
+          </tr>`).join("") : `<tr><td colspan="3" class="hint">登録されているメニュー別発注不可日はありません</td></tr>`}
       </table>
     </div>
   `;
@@ -1319,19 +1378,43 @@ function renderMenuAdmin(container){
 
   container.querySelector("#addBlockedDateBtn").onclick = ()=>{
     const val = container.querySelector("#newBlockedDate").value;
+    const scope = container.querySelector("#blockedScope").value;
     if(!val) return;
-    const newBlocked = Array.from(new Set([...(state.blockedDates||[]), val]));
-    withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    if(scope === "all"){
+      const newBlocked = Array.from(new Set([...(state.blockedDates||[]), val]));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    } else {
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_add_menu_blocked_dates", {p_token: session.token, p_menu_id: scope, p_dates: [val]});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    }
   };
 
   container.querySelector("#addBlockedRangeBtn").onclick = ()=>{
     const startVal = container.querySelector("#rangeBlockedStart").value;
     const endVal = container.querySelector("#rangeBlockedEnd").value;
+    const scope = container.querySelector("#blockedScope").value;
     if(!startVal || !endVal){ alert("開始日と終了日の両方を選択してください"); return; }
     if(startVal > endVal){ alert("終了日は開始日より後の日付にしてください"); return; }
     const rangeDates = datesInRange(startVal, endVal);
-    const newBlocked = Array.from(new Set([...(state.blockedDates||[]), ...rangeDates]));
-    withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    if(scope === "all"){
+      const newBlocked = Array.from(new Set([...(state.blockedDates||[]), ...rangeDates]));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    } else {
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_add_menu_blocked_dates", {p_token: session.token, p_menu_id: scope, p_dates: rangeDates});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    }
   };
 
   container.querySelectorAll("[data-del-range-start]").forEach(btn=>{
@@ -1339,6 +1422,20 @@ function renderMenuAdmin(container){
       const rangeDates = new Set(datesInRange(btn.dataset.delRangeStart, btn.dataset.delRangeEnd));
       const newBlocked = (state.blockedDates||[]).filter(d=> !rangeDates.has(d));
       withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    };
+  });
+
+  container.querySelectorAll("[data-del-menu-range-menu]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const rangeDates = datesInRange(btn.dataset.delMenuRangeStart, btn.dataset.delMenuRangeEnd);
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_remove_menu_blocked_dates", {p_token: session.token, p_menu_id: btn.dataset.delMenuRangeMenu, p_dates: rangeDates});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
     };
   });
 }
@@ -2165,10 +2262,15 @@ function renderProxyAdmin(container){
           return `<tr class="${todayCls.trim()}">
             <td>${fmtDateJP(d)}${todayMark}</td>
             <td><span style="color:var(--ok);">修正可</span>${lockedNote}</td>
-            ${state.menu.map(m=>`
+            ${state.menu.map(m=>{
+              const menuBlocked = isMenuBlockedDate(m.id, d) && existing!==m.id;
+              return `
               <td class="checkbox-col" style="width:auto;text-align:center;">
-                <input type="checkbox" class="proxyCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>
-              </td>`).join("")}
+                ${menuBlocked
+                  ? `<span class="hint" style="margin:0;">休止</span>`
+                  : `<input type="checkbox" class="proxyCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>`}
+              </td>`;
+            }).join("")}
             <td class="checkbox-col" style="width:56px;">
               <input type="number" class="proxyQtyInput" data-date="${d}" min="1" value="${existing ? existingQty : ""}" style="width:52px;padding:4px;">
             </td>
