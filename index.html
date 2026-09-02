@@ -1147,6 +1147,8 @@ async function reloadMenuEverywhere(){
 
 function renderMenuAdmin(container){
   const list = state.adminMenu || [];
+  const blocked = [...(state.blockedDates||[])].sort();
+  const blockedGroups = groupConsecutiveDates(blocked);
   container.innerHTML = `
     <div class="card">
       <h2>弁当メニューを追加</h2>
@@ -1202,6 +1204,29 @@ function renderMenuAdmin(container){
               <button class="danger" data-del-pdf="${p.ym}" data-del-pdf-menu="${p.menu_id}">削除</button>
             </td>
           </tr>`).join("") : `<tr><td colspan="5" class="hint">まだ登録されていません</td></tr>`}
+      </table>
+    </div>
+    <div class="card">
+      <h2>発注不可日</h2>
+      <div class="hint">指定した日付は発注画面でグレー表示になり発注できません（祝日は自動で発注不可になります）</div>
+      <div class="row" style="margin-top:8px;">
+        <input type="date" id="newBlockedDate">
+        <button class="secondary" id="addBlockedDateBtn" style="flex:0 0 auto;">追加</button>
+      </div>
+      <div class="hint" style="margin-top:14px;">夏季休業・年末年始などの長期連休は、開始日と終了日を指定してまとめて登録できます。</div>
+      <div class="row" style="align-items:center;">
+        <input type="date" id="rangeBlockedStart">
+        <span style="flex:0 0 auto;">〜</span>
+        <input type="date" id="rangeBlockedEnd">
+        <button class="secondary" id="addBlockedRangeBtn" style="flex:0 0 auto;">期間で追加</button>
+      </div>
+      <table style="margin-top:10px;">
+        <tr><th>日付</th><th class="no-print">操作</th></tr>
+        ${blockedGroups.length ? blockedGroups.map(([s,e])=>`
+          <tr>
+            <td>${s===e ? fmtDateJP(s) : `${fmtDateJP(s)} 〜 ${fmtDateJP(e)}`}</td>
+            <td class="no-print"><button class="danger" data-del-range-start="${s}" data-del-range-end="${e}">削除</button></td>
+          </tr>`).join("") : `<tr><td colspan="2" class="hint">登録されている発注不可日はありません</td></tr>`}
       </table>
     </div>
   `;
@@ -1291,13 +1316,54 @@ function renderMenuAdmin(container){
       });
     };
   });
+
+  container.querySelector("#addBlockedDateBtn").onclick = ()=>{
+    const val = container.querySelector("#newBlockedDate").value;
+    if(!val) return;
+    const newBlocked = Array.from(new Set([...(state.blockedDates||[]), val]));
+    withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+  };
+
+  container.querySelector("#addBlockedRangeBtn").onclick = ()=>{
+    const startVal = container.querySelector("#rangeBlockedStart").value;
+    const endVal = container.querySelector("#rangeBlockedEnd").value;
+    if(!startVal || !endVal){ alert("開始日と終了日の両方を選択してください"); return; }
+    if(startVal > endVal){ alert("終了日は開始日より後の日付にしてください"); return; }
+    const rangeDates = datesInRange(startVal, endVal);
+    const newBlocked = Array.from(new Set([...(state.blockedDates||[]), ...rangeDates]));
+    withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+  };
+
+  container.querySelectorAll("[data-del-range-start]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const rangeDates = new Set(datesInRange(btn.dataset.delRangeStart, btn.dataset.delRangeEnd));
+      const newBlocked = (state.blockedDates||[]).filter(d=> !rangeDates.has(d));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    };
+  });
 }
 
 /* --- 締切設定 --- */
 const WEEKDAY_LABELS = ["日","月","火","水","木","金","土"];
 
+// 発注不可日の一覧表示用: 連続した日付をまとめて「開始日〜終了日」の範囲表示にする
+// （長期連休などを個別登録した場合に、1件ずつ表示すると見づらいため）
+function groupConsecutiveDates(sortedDates){
+  const groups = [];
+  let rangeStart = null, rangeEnd = null;
+  sortedDates.forEach(d=>{
+    if(rangeEnd && datesInRange(rangeEnd, d).length === 2){
+      rangeEnd = d;
+    } else {
+      if(rangeStart) groups.push([rangeStart, rangeEnd]);
+      rangeStart = d; rangeEnd = d;
+    }
+  });
+  if(rangeStart) groups.push([rangeStart, rangeEnd]);
+  return groups;
+}
+
 function renderDeadlineAdmin(container){
-  const blocked = [...(state.blockedDates||[])].sort();
   const blockedWd = state.blockedWeekdays||[];
   container.innerHTML = `
     <div class="card">
@@ -1319,22 +1385,6 @@ function renderDeadlineAdmin(container){
       </div>
       <button class="primary" id="saveWdBtn">保存</button>
     </div>
-    <div class="card">
-      <h2>発注不可日</h2>
-      <div class="hint">指定した日付は発注画面でグレー表示になり発注できません（祝日は自動で発注不可になります）</div>
-      <div class="row" style="margin-top:8px;">
-        <input type="date" id="newBlockedDate">
-        <button class="secondary" id="addBlockedDateBtn" style="flex:0 0 auto;">追加</button>
-      </div>
-      <table style="margin-top:10px;">
-        <tr><th>日付</th><th class="no-print">操作</th></tr>
-        ${blocked.length ? blocked.map(d=>`
-          <tr>
-            <td>${fmtDateJP(d)}</td>
-            <td class="no-print"><button class="danger" data-del-date="${d}">削除</button></td>
-          </tr>`).join("") : `<tr><td colspan="2" class="hint">登録されている発注不可日はありません</td></tr>`}
-      </table>
-    </div>
     <div class="card no-print" style="border:2px solid #c0392b;">
       <h2 style="color:#c0392b;">⚠ テスト運用: 発注データの一括削除</h2>
       <div class="hint" style="color:#c0392b;">この操作を実行すると、これまでに登録された発注データ（全対象者・全日付分）が全件削除されます。<strong>元に戻すことはできません。</strong>本運用を開始する前のテストデータ削除にのみ使用してください。</div>
@@ -1354,20 +1404,6 @@ function renderDeadlineAdmin(container){
     const newWd = Array.from(container.querySelectorAll(".wdCheckbox:checked")).map(el=>Number(el.dataset.wd));
     withLoading(()=> saveSettingsPartial({ blockedWeekdays: newWd }));
   };
-
-  container.querySelector("#addBlockedDateBtn").onclick = ()=>{
-    const val = container.querySelector("#newBlockedDate").value;
-    if(!val) return;
-    const newBlocked = Array.from(new Set([...(state.blockedDates||[]), val]));
-    withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
-  };
-
-  container.querySelectorAll("[data-del-date]").forEach(btn=>{
-    btn.onclick = ()=>{
-      const newBlocked = (state.blockedDates||[]).filter(d=>d!==btn.dataset.delDate);
-      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
-    };
-  });
 
   container.querySelector("#deleteAllOrdersBtn").onclick = ()=>{
     const pwInput = container.querySelector("#deleteOrdersPassword");
