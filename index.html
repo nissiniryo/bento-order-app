@@ -304,14 +304,15 @@ async function saveSettingsPartial(overrides){
 }
 
 // 発注月度（21日始まり20日締め）に対応した本人の発注情報を取得する
-// state.orders[date][employeeId] は { menuId, qty } の形で保持する（qtyはまれな複数個発注に対応するため）
+// state.orders[date][employeeId] は { menuId, qty, placedByAdmin } の形で保持する
+// （qtyはまれな複数個発注に対応するため。placedByAdminは管理者による代理登録かどうか）
 async function loadMyOrdersForMonth(periodYm){
   const {start, end} = periodRange(periodYm);
   const rows = await sbRpc("rpc_get_my_orders_range", {p_token: session.token, p_start_date: start, p_end_date: end});
   datesInPeriod(periodYm).forEach(d=>{ if(state.orders[d]) delete state.orders[d][session.employeeId]; });
   rows.forEach(r=>{
     if(!state.orders[r.date]) state.orders[r.date] = {};
-    state.orders[r.date][session.employeeId] = { menuId: r.menu_id, qty: r.qty || 1 };
+    state.orders[r.date][session.employeeId] = { menuId: r.menu_id, qty: r.qty || 1, placedByAdmin: !!r.placed_by_admin };
   });
   // その月度に登録済みの献立PDF一覧（メニューごと）も一緒に取得しておく
   try{
@@ -443,6 +444,12 @@ function existingQtyFor(empId, dateStr){
   return o ? (o.qty || 1) : 1;
 }
 
+// 管理者が本人に代わって登録した発注かどうか（本人の画面で分かるようにするため）
+function existingPlacedByAdminFor(empId, dateStr){
+  const o = state.orders[dateStr] && state.orders[dateStr][empId];
+  return !!(o && o.placedByAdmin);
+}
+
 function downloadFile(filename, content){
   const blob = new Blob(["﻿"+content], {type:"text/csv;charset=utf-8"});
   downloadBlob(filename, blob);
@@ -499,6 +506,14 @@ document.getElementById("mainNav").addEventListener("click", (e)=>{
     withLoading(()=> loadAdminSubData(currentAdminSub));
   } else {
     render();
+  }
+});
+
+// 他のタブ・別端末での操作（管理者による代理発注など）に気づけるよう、
+// ブラウザタブが再表示されたタイミングで発注画面のデータを静かに再取得する
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible" && session && currentTab === "order" && !isLoading){
+    loadMyOrdersForMonth(calendarYearMonth).then(render).catch(()=>{});
   }
 });
 
@@ -581,7 +596,10 @@ function renderOrderTab(){
         <input type="month" id="monthSelect" value="${calendarYearMonth}">
         <button class="secondary" id="nextMonthBtn" style="flex:0 0 auto;">次月度 →</button>
       </div>
-      <div class="hint">締切ルール：${state.deadline.daysBefore>0 ? `対象日の${state.deadline.daysBefore}日前 ${state.deadline.time} まで` : `当日${state.deadline.time}まで`}</div>
+      <div class="row" style="margin-top:4px;">
+        <button class="secondary" id="refreshOrdersBtn" style="flex:0 0 auto;">最新の状態に更新</button>
+      </div>
+      <div class="hint">締切ルール：${state.deadline.daysBefore>0 ? `対象日の${state.deadline.daysBefore}日前 ${state.deadline.time} まで` : `当日${state.deadline.time}まで`}<br>締切後に管理者が代わって登録した発注は、上の表に「（管理者が代理で登録しました）」と表示されます。表示されない場合は「最新の状態に更新」を押してください。</div>
       ${(state.menuPdfsForMonth||[]).length ? `
       <div class="row" style="margin-top:8px;flex-wrap:wrap;">
         ${state.menuPdfsForMonth.map(p=>`<button class="secondary" data-view-menu-pdf="${p.menu_id}" style="flex:0 0 auto;">献立を確認する（${p.menu_name}）</button>`).join("")}
@@ -605,8 +623,10 @@ function renderOrderTab(){
           const locked = isLocked(d);
           const existing = existingMenuFor(session.employeeId, d);
           const existingQty = existingQtyFor(session.employeeId, d);
+          const existingByAdmin = existingPlacedByAdminFor(session.employeeId, d);
           const existingMenuName = existing ? (state.menu.find(m=>m.id===existing)?.name || "―") : null;
           const existingLabel = existingMenuName ? (existingQty > 1 ? `${existingMenuName} ×${existingQty}` : existingMenuName) : null;
+          const existingLabelHtml = existingLabel ? `${existingLabel}${existingByAdmin ? ' <span class="hint" style="margin:0;color:var(--sub);">（管理者が代理で登録しました）</span>' : ''}` : null;
           const isToday = d === todayStr();
           const todayCls = isToday ? " row-today" : "";
           const todayMark = isToday ? ` <span class="today-badge">本日</span>` : "";
@@ -616,18 +636,18 @@ function renderOrderTab(){
             return `<tr class="row-holiday${todayCls}"${rowIdAttr}>
               <td>${fmtDateJP(d)}${todayMark}</td>
               <td><span style="color:var(--sub);">休（${label}）</span></td>
-              <td colspan="${state.menu.length+1}">${existingLabel ? existingLabel : "発注不可"}</td>
+              <td colspan="${state.menu.length+1}">${existingLabelHtml ? existingLabelHtml : "発注不可"}</td>
             </tr>`;
           }
           if(locked){
             return `<tr class="row-holiday${todayCls}"${rowIdAttr}>
               <td>${fmtDateJP(d)}${todayMark}</td>
               <td><span style="color:var(--lock);">締切済み</span></td>
-              <td colspan="${state.menu.length+1}">${existingLabel ? existingLabel : "（発注なし）"}</td>
+              <td colspan="${state.menu.length+1}">${existingLabelHtml ? existingLabelHtml : "（発注なし）"}</td>
             </tr>`;
           }
           return `<tr class="${todayCls.trim()}"${rowIdAttr}>
-            <td>${fmtDateJP(d)}${todayMark}</td>
+            <td>${fmtDateJP(d)}${todayMark}${existingByAdmin ? ' <span class="hint" style="margin:0;color:var(--sub);">（代理登録）</span>' : ''}</td>
             <td><span style="color:var(--ok);">受付中</span></td>
             ${state.menu.map(m=>{
               const menuBlocked = isMenuBlockedDate(m.id, d) && existing!==m.id;
@@ -635,7 +655,7 @@ function renderOrderTab(){
               <td class="checkbox-col" style="width:auto;text-align:center;">
                 ${menuBlocked
                   ? `<span class="hint" style="margin:0;">休止</span>`
-                  : `<input type="checkbox" class="calCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>`}
+                  : `<input type="checkbox" class="calCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""} ${existing===m.id && existingByAdmin ? 'title="管理者が代理で登録しました"' : ''}>`}
               </td>`;
             }).join("")}
             <td class="checkbox-col" style="width:56px;">
@@ -675,6 +695,9 @@ function renderOrderTab(){
   document.getElementById("nextMonthBtn").onclick = ()=>{
     calendarYearMonth = shiftMonth(calendarYearMonth, 1);
     batchMessage="";
+    withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
+  };
+  document.getElementById("refreshOrdersBtn").onclick = ()=>{
     withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
   };
   document.querySelectorAll("[data-view-menu-pdf]").forEach(btn=>{
@@ -776,7 +799,7 @@ async function placeBatchOrders(changes){
       if(c.action === "place"){
         await sbRpc("rpc_place_order", {p_token: session.token, p_date: c.date, p_menu_id: c.menuId, p_qty: c.qty || 1});
         if(!state.orders[c.date]) state.orders[c.date] = {};
-        state.orders[c.date][session.employeeId] = { menuId: c.menuId, qty: c.qty || 1 };
+        state.orders[c.date][session.employeeId] = { menuId: c.menuId, qty: c.qty || 1, placedByAdmin: false };
         ordered++;
       } else {
         await sbRpc("rpc_cancel_order", {p_token: session.token, p_date: c.date});
