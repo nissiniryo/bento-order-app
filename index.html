@@ -1,115 +1,2498 @@
--- ============================================================
--- 追加マイグレーション: メニュー管理画面にFAX作成用の項目を追加
--- 　① 発注先FAX番号を、FAX送付状の業者名の下に印字する
--- 　② 締切時間（メニューごと。FAXに反映するかどうかを選択可能）
--- 　③ コース名（メニューごと。FAXに反映するかどうかを選択可能）
--- 　④ お客様番号（メニューごと。FAXに反映するかどうかを選択可能）
--- Supabaseダッシュボード > SQL Editor > New query に全文貼り付けて実行してください。
--- （supabase_migration_dispatch_qty.sql の後に実行するものです）
--- ============================================================
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弁当発注アプリ</title>
+<style>
+  :root{
+    --main:#f0913f; --main-dark:#cc7328; --bg:#ffffff; --card:#ffffff;
+    --border:#ffe3c2; --text:#333; --sub:#948a7e; --ok:#3a8b4a; --lock:#b0453a;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:0;}
+  header{background:var(--main);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;}
+  header h1{font-size:18px;margin:0;}
+  header .clock{font-size:12px;opacity:.9;}
+  nav{display:flex;background:#fff;border-bottom:1px solid var(--border);overflow-x:auto;}
+  nav button{background:none;border:none;padding:12px 18px;font-size:14px;cursor:pointer;color:var(--sub);white-space:nowrap;border-bottom:3px solid transparent;}
+  nav button.active{color:var(--main-dark);border-bottom:3px solid var(--main);font-weight:bold;}
+  main{max-width:820px;margin:0 auto;padding:16px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;}
+  .card h2{font-size:16px;margin:0 0 12px;color:var(--main-dark);}
+  label{display:block;font-size:13px;color:var(--sub);margin-bottom:4px;margin-top:10px;}
+  select,input[type=date],input[type=text],input[type=number],input[type=time],input[type=file],input[type=month]{
+    width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:#fff;
+  }
+  .menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-top:8px;}
+  .menu-item{border:2px solid var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;background:#fff;}
+  .menu-item.selected{border-color:var(--main);background:#fff1e0;}
+  .menu-item .name{font-weight:bold;font-size:14px;}
+  .menu-item .price{font-size:12px;color:var(--sub);margin-top:4px;}
+  button.primary{background:var(--main);color:#fff;border:none;padding:11px 20px;border-radius:6px;font-size:15px;cursor:pointer;margin-top:14px;}
+  button.primary:disabled{background:#ccc;cursor:not-allowed;}
+  button.secondary{background:#fff;color:var(--main-dark);border:1px solid var(--main);padding:8px 14px;border-radius:6px;font-size:13px;cursor:pointer;}
+  button.danger{background:#fff;color:var(--lock);border:1px solid var(--lock);padding:6px 10px;border-radius:6px;font-size:12px;cursor:pointer;}
+  button.small{padding:6px 10px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:#fff;cursor:pointer;}
+  .status-box{padding:10px 12px;border-radius:6px;font-size:13px;margin-top:10px;}
+  .status-ok{background:#eaf6ec;color:var(--ok);border:1px solid #c7e7cc;}
+  .status-lock{background:#fbebe9;color:var(--lock);border:1px solid #f0c9c4;}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px;}
+  th,td{border:1px solid var(--border);padding:7px 8px;text-align:left;}
+  th{background:#fff1e0;}
+  .table-scroll{max-height:60vh;overflow-y:auto;overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-top:8px;}
+  .table-scroll table{margin-top:0;}
+  .table-scroll th{position:sticky;top:0;z-index:2;box-shadow:0 1px 0 var(--border);}
+  @media print{ .table-scroll{max-height:none;overflow:visible;} .table-scroll th{position:static;} }
+  .subtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
+  .subtabs button{padding:7px 12px;font-size:13px;border:1px solid var(--border);background:#fff;border-radius:16px;cursor:pointer;color:var(--sub);}
+  .subtabs button.active{background:var(--main);color:#fff;border-color:var(--main);}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .row > *{flex:1;min-width:100px;}
+  .hint{font-size:12px;color:var(--sub);margin-top:6px;}
+  .checkbox-col{width:34px;text-align:center;}
+  .checkbox-box{display:inline-block;width:16px;height:16px;border:1.5px solid #333;}
+  .total-row{font-weight:bold;background:#fff1e0;}
+  .row-holiday td{background:#eeeeee;color:#999;}
+  .row-today td{background:#fff1e0;font-weight:bold;box-shadow:inset 0 2px 0 var(--main), inset 0 -2px 0 var(--main);}
+  .row-today.row-holiday td{background:#e9e2da;}
+  .today-badge{display:inline-block;background:var(--main);color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;margin-left:6px;vertical-align:middle;}
+  .weekday-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
+  .weekday-grid label{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--text);margin:0;width:auto;}
+  .weekday-grid input{width:auto;}
+  .receipt-table th,.receipt-table td{padding:2px 8px;font-size:12px;line-height:1.3;}
+  .receipt-table .checkbox-box{width:12px;height:12px;}
+  .receipt-table th.date-col,.receipt-table td.date-col{width:90px;}
+  .receipt-table .dept-group-row td{background:#fff1e0;color:var(--main-dark);font-weight:bold;font-size:12px;padding:3px 8px;}
+  .receipt-table tr:nth-child(even) td{background:#f2f6fb;}
+  .receipt-page h2{margin:0 0 6px;}
+  #faxSheetHolder{display:none;}
+  .fax-sheet{width:100%;padding:20px;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;}
+  .fax-sheet h1{font-size:28px;text-align:center;border-bottom:3px solid #333;padding-bottom:14px;margin:0 0 26px;letter-spacing:4px;}
+  .fax-sheet .fax-menu-name{text-align:center;margin:0 0 30px;padding:14px;border:2px solid #333;}
+  .fax-sheet .fax-menu-name .fax-menu-line{font-size:20px;font-weight:bold;}
+  .fax-sheet .fax-menu-name .fax-title-line{font-size:34px;font-weight:bold;margin-top:8px;letter-spacing:6px;}
+  .fax-info-table{width:100%;border-collapse:collapse;font-size:16px;}
+  .fax-info-table th{width:150px;text-align:left;background:#f5f5f5;padding:12px 14px;border:1px solid #999;}
+  .fax-info-table td{padding:12px 14px;border:1px solid #999;}
+  .fax-info-table tr.fax-emphasis-row th,
+  .fax-info-table tr.fax-emphasis-row td{font-size:28px;font-weight:bold;}
+  .blink-alert{
+    color:#c0392b;font-weight:bold;font-size:16px;margin-top:10px;
+    padding:10px 14px;border:2px solid #c0392b;border-radius:6px;background:#ffe3e3;
+    animation: blinkAlert 1s infinite;
+  }
+  @keyframes blinkAlert{
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .monthly-table td, .monthly-table th{ white-space:nowrap; }
+  @page{ size: A4; margin: 18mm; }
+  @media print{
+    header, nav, .no-print{display:none !important;}
+    body{background:#fff;}
+    main{max-width:100%;padding:0;}
+    .card{border:none;box-shadow:none;}
+    .receipt-table th,.receipt-table td{padding:1px 6px;font-size:13px;line-height:1.15;}
+    .receipt-table .dept-group-row td{padding:2px 6px;}
+    .receipt-table tr:nth-child(even) td{background:#eef1f4 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    body.printing-fax > *:not(#faxSheetHolder){display:none !important;}
+    body.printing-fax #faxSheetHolder{display:block;}
+    .receipt-page{ page-break-after: always; }
+    .receipt-page:last-child{ page-break-after: auto; }
+    .fax-page{ page-break-after: always; }
+    .fax-page:last-child{ page-break-after: auto; }
+  }
+</style>
+</head>
+<body>
 
--- ------------------------------------------------------------
--- 1. スキーマ変更: menu_fax に項目を追加
--- ------------------------------------------------------------
+<header>
+  <h1>🍱 弁当発注アプリ</h1>
+  <div class="clock" id="clockDisplay"></div>
+</header>
 
-alter table menu_fax add column if not exists deadline_time text not null default '';
-alter table menu_fax add column if not exists deadline_time_show boolean not null default false;
-alter table menu_fax add column if not exists course_name text not null default '';
-alter table menu_fax add column if not exists course_name_show boolean not null default false;
-alter table menu_fax add column if not exists customer_number text not null default '';
-alter table menu_fax add column if not exists customer_number_show boolean not null default false;
+<nav id="mainNav">
+  <button data-tab="order" class="active">発注</button>
+  <button data-tab="admin">管理</button>
+</nav>
 
--- ------------------------------------------------------------
--- 2. メニューの追加・編集: 新しい項目もまとめて登録できるようにする
---    （戻り値の列が変わるため一旦DROP）
--- ------------------------------------------------------------
+<main id="app"></main>
 
-drop function if exists rpc_admin_upsert_menu(uuid, text, text, integer, integer, integer, text);
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script>
+/* ===================== Supabase 接続設定 ===================== */
+const SUPABASE_URL = "https://kedcbnwofumuvplqaoae.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtlZGNibndvZnVtdXZwbHFhb2FlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzOTI1MjEsImV4cCI6MjEwMDk2ODUyMX0.HCo6YG6bBqXnEodDYoi4Um97ePYhCljeZNiE7iTAl5E";
 
-create or replace function rpc_admin_upsert_menu(
-  p_token uuid, p_id text, p_name text, p_price_employee integer, p_price_executive integer,
-  p_price_dispatch integer default 0, p_fax_number text default '',
-  p_deadline_time text default '', p_deadline_time_show boolean default false,
-  p_course_name text default '', p_course_name_show boolean default false,
-  p_customer_number text default '', p_customer_number_show boolean default false
-)
-returns table(
-  id text, name text, price_employee integer, price_executive integer, price_dispatch integer,
-  fax_number text, deadline_time text, deadline_time_show boolean,
-  course_name text, course_name_show boolean, customer_number text, customer_number_show boolean
-)
-language plpgsql
-security definer
-set search_path = public
-as $$
-#variable_conflict use_column
-declare
-  v_menu menu;
-begin
-  perform _require_admin(p_token);
-  if p_id is null or p_id = '' then
-    insert into menu (name, price_employee, price_executive, price_dispatch)
-    values (p_name, coalesce(p_price_employee,0), coalesce(p_price_executive,0), coalesce(p_price_dispatch,0))
-    returning * into v_menu;
-  else
-    update menu
-    set name = p_name, price_employee = coalesce(p_price_employee,0), price_executive = coalesce(p_price_executive,0),
-        price_dispatch = coalesce(p_price_dispatch,0)
-    where menu.id = p_id
-    returning * into v_menu;
-  end if;
+async function sbRequest(path, options){
+  options = options || {};
+  let res;
+  try{
+    res = await fetch(SUPABASE_URL + path, {
+      method: options.method || "GET",
+      headers: Object.assign({
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+        "Content-Type": "application/json"
+      }, options.headers || {}),
+      body: options.body
+    });
+  }catch(networkErr){
+    throw new Error("サーバーに接続できません。しばらくしてから再度お試しください（プロジェクトが一時停止している可能性もあります）。");
+  }
+  let data = null;
+  const text = await res.text();
+  if(text){
+    try{ data = JSON.parse(text); }catch(e){ data = text; }
+  }
+  if(!res.ok){
+    const err = new Error((data && data.message) ? data.message : ("通信エラー（HTTP " + res.status + "）"));
+    err.code = data && data.code;
+    throw err;
+  }
+  return data;
+}
 
-  insert into menu_fax (
-    menu_id, fax_number, deadline_time, deadline_time_show, course_name, course_name_show, customer_number, customer_number_show
-  )
-  values (
-    v_menu.id, coalesce(p_fax_number,''), coalesce(p_deadline_time,''), coalesce(p_deadline_time_show,false),
-    coalesce(p_course_name,''), coalesce(p_course_name_show,false), coalesce(p_customer_number,''), coalesce(p_customer_number_show,false)
-  )
-  on conflict (menu_id) do update
-    set fax_number = coalesce(p_fax_number,''),
-        deadline_time = coalesce(p_deadline_time,''),
-        deadline_time_show = coalesce(p_deadline_time_show,false),
-        course_name = coalesce(p_course_name,''),
-        course_name_show = coalesce(p_course_name_show,false),
-        customer_number = coalesce(p_customer_number,''),
-        customer_number_show = coalesce(p_customer_number_show,false);
+function sbSelect(table, query){
+  return sbRequest("/rest/v1/" + table + "?select=*" + (query ? ("&" + query) : ""));
+}
 
-  return query select
-    v_menu.id, v_menu.name, v_menu.price_employee, v_menu.price_executive, v_menu.price_dispatch,
-    coalesce(p_fax_number,''), coalesce(p_deadline_time,''), coalesce(p_deadline_time_show,false),
-    coalesce(p_course_name,''), coalesce(p_course_name_show,false), coalesce(p_customer_number,''), coalesce(p_customer_number_show,false);
-end;
-$$;
-grant execute on function rpc_admin_upsert_menu(uuid, text, text, integer, integer, integer, text, text, boolean, text, boolean, text, boolean) to anon;
+function sbRpc(fn, params){
+  return sbRequest("/rest/v1/rpc/" + fn, {method:"POST", body: JSON.stringify(params || {})});
+}
 
--- ------------------------------------------------------------
--- 3. 管理タブのメニュー一覧: 新しい項目もまとめて返す
---    （戻り値の列が変わるため一旦DROP）
--- ------------------------------------------------------------
+function friendlyError(e){
+  if(e.code === "23505") return "その値は既に使用されています（重複）。";
+  if(e.message === "cannot_delete_last_admin") return "最後の管理者アカウントは削除・降格できません。先に別の管理者を設定してください。";
+  if(e.message === "not_admin") return "管理者権限がありません。";
+  if(e.message === "invalid_session") return "セッションの有効期限が切れました。再度ログインしてください。";
+  return "エラーが発生しました: " + e.message;
+}
 
-drop function if exists rpc_admin_list_menu(uuid);
+// 対象者区分: "employee"(社員) / "executive"(役員) / "dispatch"(派遣)
+const EMPLOYEE_TYPE_LABELS = { employee: "社員", executive: "役員", dispatch: "派遣" };
+function employeeTypeLabel(t){ return EMPLOYEE_TYPE_LABELS[t] || "社員"; }
 
-create or replace function rpc_admin_list_menu(p_token uuid)
-returns table(
-  id text, name text, price_employee integer, price_executive integer, price_dispatch integer,
-  fax_number text, deadline_time text, deadline_time_show boolean,
-  course_name text, course_name_show boolean, customer_number text, customer_number_show boolean
-)
-language plpgsql
-security definer
-set search_path = public
-as $$
-#variable_conflict use_column
-begin
-  perform _require_admin(p_token);
-  return query
-    select m.id, m.name, m.price_employee, m.price_executive, m.price_dispatch,
-      coalesce(mf.fax_number, ''), coalesce(mf.deadline_time, ''), coalesce(mf.deadline_time_show, false),
-      coalesce(mf.course_name, ''), coalesce(mf.course_name_show, false), coalesce(mf.customer_number, ''), coalesce(mf.customer_number_show, false)
-    from menu m
-    left join menu_fax mf on mf.menu_id = m.id
-    order by m.name;
-end;
-$$;
-grant execute on function rpc_admin_list_menu(uuid) to anon;
+function mapEmployee(row){
+  return { id: row.id, code: row.code, name: row.name, dept: row.dept, isAdmin: row.is_admin, orgCode: row.org_code || "", employeeType: row.employee_type || "employee", aggDept: row.agg_dept || "" };
+}
+
+// 発注画面で使う公開メニュー情報（社員・役員・派遣の3価格のみ。FAX番号は含めない）
+function mapMenu(row){
+  return { id: row.id, name: row.name, priceEmployee: row.price_employee, priceExecutive: row.price_executive, priceDispatch: row.price_dispatch };
+}
+
+// メニュー管理画面（管理者専用）で使う、FAX番号を含む完全なメニュー情報
+function mapMenuAdmin(row){
+  return {
+    id: row.id, name: row.name, priceEmployee: row.price_employee, priceExecutive: row.price_executive, priceDispatch: row.price_dispatch,
+    faxNumber: row.fax_number || "",
+    deadlineTime: row.deadline_time || "", deadlineTimeShow: !!row.deadline_time_show,
+    courseName: row.course_name || "", courseNameShow: !!row.course_name_show,
+    customerNumber: row.customer_number || "", customerNumberShow: !!row.customer_number_show
+  };
+}
+
+// ログイン中の本人の区分（社員/役員/派遣）に応じた、指定メニューの単価を返す
+function priceForMenu(menu){
+  if(!menu) return 0;
+  const t = session && session.employeeType;
+  if(t === "executive") return menu.priceExecutive||0;
+  if(t === "dispatch") return menu.priceDispatch||0;
+  return menu.priceEmployee||0;
+}
+
+/* ===================== 祝日データ（2024年〜2032年、事前計算・振替休日/国民の休日を含む） ===================== */
+const HOLIDAYS = {"2024-01-01":"元日", "2024-01-08":"成人の日", "2024-02-11":"建国記念の日", "2024-02-12":"振替休日", "2024-02-23":"天皇誕生日", "2024-03-20":"春分の日", "2024-04-29":"昭和の日", "2024-05-03":"憲法記念日", "2024-05-04":"みどりの日", "2024-05-05":"こどもの日", "2024-05-06":"振替休日", "2024-07-15":"海の日", "2024-08-11":"山の日", "2024-08-12":"振替休日", "2024-09-16":"敬老の日", "2024-09-22":"秋分の日", "2024-09-23":"振替休日", "2024-10-14":"スポーツの日", "2024-11-03":"文化の日", "2024-11-04":"振替休日", "2024-11-23":"勤労感謝の日", "2025-01-01":"元日", "2025-01-13":"成人の日", "2025-02-11":"建国記念の日", "2025-02-23":"天皇誕生日", "2025-02-24":"振替休日", "2025-03-20":"春分の日", "2025-04-29":"昭和の日", "2025-05-03":"憲法記念日", "2025-05-04":"みどりの日", "2025-05-05":"こどもの日", "2025-05-06":"振替休日", "2025-07-21":"海の日", "2025-08-11":"山の日", "2025-09-15":"敬老の日", "2025-09-23":"秋分の日", "2025-10-13":"スポーツの日", "2025-11-03":"文化の日", "2025-11-23":"勤労感謝の日", "2025-11-24":"振替休日", "2026-01-01":"元日", "2026-01-12":"成人の日", "2026-02-11":"建国記念の日", "2026-02-23":"天皇誕生日", "2026-03-20":"春分の日", "2026-04-29":"昭和の日", "2026-05-03":"憲法記念日", "2026-05-04":"みどりの日", "2026-05-05":"こどもの日", "2026-05-06":"振替休日", "2026-07-20":"海の日", "2026-08-11":"山の日", "2026-09-21":"敬老の日", "2026-09-22":"国民の休日", "2026-09-23":"秋分の日", "2026-10-12":"スポーツの日", "2026-11-03":"文化の日", "2026-11-23":"勤労感謝の日", "2027-01-01":"元日", "2027-01-11":"成人の日", "2027-02-11":"建国記念の日", "2027-02-23":"天皇誕生日", "2027-03-21":"春分の日", "2027-03-22":"振替休日", "2027-04-29":"昭和の日", "2027-05-03":"憲法記念日", "2027-05-04":"みどりの日", "2027-05-05":"こどもの日", "2027-07-19":"海の日", "2027-08-11":"山の日", "2027-09-20":"敬老の日", "2027-09-23":"秋分の日", "2027-10-11":"スポーツの日", "2027-11-03":"文化の日", "2027-11-23":"勤労感謝の日", "2028-01-01":"元日", "2028-01-10":"成人の日", "2028-02-11":"建国記念の日", "2028-02-23":"天皇誕生日", "2028-03-20":"春分の日", "2028-04-29":"昭和の日", "2028-05-03":"憲法記念日", "2028-05-04":"みどりの日", "2028-05-05":"こどもの日", "2028-07-17":"海の日", "2028-08-11":"山の日", "2028-09-18":"敬老の日", "2028-09-22":"秋分の日", "2028-10-09":"スポーツの日", "2028-11-03":"文化の日", "2028-11-23":"勤労感謝の日", "2029-01-01":"元日", "2029-01-08":"成人の日", "2029-02-11":"建国記念の日", "2029-02-12":"振替休日", "2029-02-23":"天皇誕生日", "2029-03-20":"春分の日", "2029-04-29":"昭和の日", "2029-04-30":"振替休日", "2029-05-03":"憲法記念日", "2029-05-04":"みどりの日", "2029-05-05":"こどもの日", "2029-07-16":"海の日", "2029-08-11":"山の日", "2029-09-17":"敬老の日", "2029-09-23":"秋分の日", "2029-09-24":"振替休日", "2029-10-08":"スポーツの日", "2029-11-03":"文化の日", "2029-11-23":"勤労感謝の日", "2030-01-01":"元日", "2030-01-14":"成人の日", "2030-02-11":"建国記念の日", "2030-02-23":"天皇誕生日", "2030-03-20":"春分の日", "2030-04-29":"昭和の日", "2030-05-03":"憲法記念日", "2030-05-04":"みどりの日", "2030-05-05":"こどもの日", "2030-05-06":"振替休日", "2030-07-15":"海の日", "2030-08-11":"山の日", "2030-09-16":"敬老の日", "2030-09-23":"秋分の日", "2030-10-14":"スポーツの日", "2030-11-03":"文化の日", "2030-11-04":"振替休日", "2030-11-23":"勤労感謝の日", "2031-01-01":"元日", "2031-01-13":"成人の日", "2031-02-11":"建国記念の日", "2031-02-23":"天皇誕生日", "2031-02-24":"振替休日", "2031-03-21":"春分の日", "2031-04-29":"昭和の日", "2031-05-03":"憲法記念日", "2031-05-04":"みどりの日", "2031-05-05":"こどもの日", "2031-05-06":"振替休日", "2031-07-21":"海の日", "2031-08-11":"山の日", "2031-09-15":"敬老の日", "2031-09-23":"秋分の日", "2031-10-13":"スポーツの日", "2031-11-03":"文化の日", "2031-11-23":"勤労感謝の日", "2031-11-24":"振替休日", "2032-01-01":"元日", "2032-01-12":"成人の日", "2032-02-11":"建国記念の日", "2032-02-23":"天皇誕生日", "2032-03-20":"春分の日", "2032-04-29":"昭和の日", "2032-05-03":"憲法記念日", "2032-05-04":"みどりの日", "2032-05-05":"こどもの日", "2032-07-19":"海の日", "2032-08-11":"山の日", "2032-09-20":"敬老の日", "2032-09-21":"国民の休日", "2032-09-22":"秋分の日", "2032-10-11":"スポーツの日", "2032-11-03":"文化の日", "2032-11-23":"勤労感謝の日"};
+// 2033年以降の日付は祝日データが未登録のため、通常の平日として扱われます（土日判定は別途blockedDatesで対応可能）。必要に応じてこのリストを更新してください。
+
+/* ===================== データ層（Supabase） ===================== */
+let state = {
+  menu: [],
+  deadline: {daysBefore:0, time:"09:00"},
+  blockedDates: [],
+  blockedWeekdays: [], // 発注不可の曜日（0:日 1:月 2:火 3:水 4:木 5:金 6:土）
+  orders: {},     // キャッシュ: { "YYYY-MM-DD": { employeeId: menuId } }（ログイン中の本人の分のみ）
+  employees: [],  // 管理タブ「対象者リスト」を開いたときだけ取得
+  adminMenu: [],  // 管理タブ「メニュー管理」用（FAX番号を含む。発注画面のstate.menuとは別に保持）
+  menuPdfList: [], // 管理タブ「メニュー管理」用: 登録済み献立PDFの一覧（月度・メニューごと。PDF本体は含まない）
+  menuPdfsForMonth: [], // 発注画面用: 現在表示中の月度に登録済みの献立PDF一覧（メニューごと）
+  menuBlockedDates: {}, // 発注画面用: メニュー別の発注不可日 { menuId: ["YYYY-MM-DD", ...] }
+  menuBlockedDatesAdmin: [] // 管理タブ「メニュー管理」用: メニュー別発注不可日の一覧（メニュー名付き）
+};
+
+const SESSION_STORAGE_KEY = "bentoAppSession_v1";
+let session = null; // { token, employeeId, name, dept, isAdmin, employeeType, code }
+
+function loadStoredSession(){
+  try{
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function persistSession(){
+  if(session) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  else localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+async function loginWithCode(code){
+  const trimmed = (code||"").trim();
+  if(!trimmed){ loginError = "社員CDを入力してください"; return false; }
+  const rows = await sbRpc("rpc_login", {p_code: trimmed});
+  if(!rows || rows.length === 0){
+    loginError = "該当する社員CDが見つかりません";
+    return false;
+  }
+  const r = rows[0];
+  session = { token: r.session_token, employeeId: r.employee_id, name: r.name, dept: r.dept, isAdmin: r.is_admin, employeeType: r.employee_type || "employee", code: trimmed };
+  persistSession();
+  loginError = "";
+  return true;
+}
+
+async function logout(){
+  if(session){
+    try{ await sbRpc("rpc_logout", {p_token: session.token}); }catch(e){ /* ベストエフォート */ }
+  }
+  session = null;
+  persistSession();
+  state.orders = {};
+  state.employees = [];
+}
+
+async function loadMenu(){
+  state.menu = (await sbSelect("menu", "order=name.asc")).map(mapMenu);
+}
+
+async function loadSettings(){
+  const s = await sbRpc("rpc_get_settings", {p_token: session.token});
+  state.deadline = { daysBefore: s.deadline_days_before, time: s.deadline_time };
+  state.blockedDates = s.blocked_dates || [];
+  state.blockedWeekdays = s.blocked_weekdays || [];
+  await loadMenuBlockedDates();
+}
+
+// メニュー別の発注不可日を取得し、{ menuId: ["YYYY-MM-DD", ...] } の形にまとめる
+async function loadMenuBlockedDates(){
+  const rows = await sbRpc("rpc_get_menu_blocked_dates", {p_token: session.token});
+  const map = {};
+  (rows||[]).forEach(r=>{
+    if(!map[r.menu_id]) map[r.menu_id] = [];
+    map[r.menu_id].push(r.date);
+  });
+  state.menuBlockedDates = map;
+}
+
+// 指定メニューが指定日に休止（発注不可）かどうか
+function isMenuBlockedDate(menuId, dateStr){
+  return (state.menuBlockedDates[menuId] || []).includes(dateStr);
+}
+
+// 締切設定・発注不可日・発注不可曜日をまとめて保存する（overridesで指定した項目だけ変更する）
+async function saveSettingsPartial(overrides){
+  const payload = Object.assign({
+    daysBefore: state.deadline.daysBefore,
+    time: state.deadline.time,
+    blockedDates: state.blockedDates || [],
+    blockedWeekdays: state.blockedWeekdays || []
+  }, overrides || {});
+  const updated = await sbRpc("rpc_admin_update_settings", {
+    p_token: session.token,
+    p_days_before: payload.daysBefore,
+    p_time: payload.time,
+    p_blocked_dates: payload.blockedDates,
+    p_blocked_weekdays: payload.blockedWeekdays
+  });
+  state.deadline = { daysBefore: updated.deadline_days_before, time: updated.deadline_time };
+  state.blockedDates = updated.blocked_dates || [];
+  state.blockedWeekdays = updated.blocked_weekdays || [];
+}
+
+// 発注月度（21日始まり20日締め）に対応した本人の発注情報を取得する
+// state.orders[date][employeeId] は { menuId, qty, placedByAdmin } の形で保持する
+// （qtyはまれな複数個発注に対応するため。placedByAdminは管理者による代理登録かどうか）
+async function loadMyOrdersForMonth(periodYm){
+  const {start, end} = periodRange(periodYm);
+  const rows = await sbRpc("rpc_get_my_orders_range", {p_token: session.token, p_start_date: start, p_end_date: end});
+  datesInPeriod(periodYm).forEach(d=>{ if(state.orders[d]) delete state.orders[d][session.employeeId]; });
+  rows.forEach(r=>{
+    if(!state.orders[r.date]) state.orders[r.date] = {};
+    state.orders[r.date][session.employeeId] = { menuId: r.menu_id, qty: r.qty || 1, placedByAdmin: !!r.placed_by_admin };
+  });
+  // その月度に登録済みの献立PDF一覧（メニューごと）も一緒に取得しておく
+  try{
+    state.menuPdfsForMonth = await sbRpc("rpc_get_menu_pdfs_for_month", {p_token: session.token, p_ym: periodYm});
+  }catch(e){
+    state.menuPdfsForMonth = [];
+  }
+}
+
+// 管理者による代理発注用: 指定した社員の、指定した発注月度の発注情報を取得する（同じstate.ordersキャッシュに格納する）
+async function loadProxyOrdersForPeriod(employeeId, periodYm){
+  const {start, end} = periodRange(periodYm);
+  const rows = await sbRpc("rpc_admin_get_orders_for_employee", {p_token: session.token, p_employee_id: employeeId, p_start_date: start, p_end_date: end});
+  datesInPeriod(periodYm).forEach(d=>{ if(state.orders[d]) delete state.orders[d][employeeId]; });
+  rows.forEach(r=>{
+    if(!state.orders[r.date]) state.orders[r.date] = {};
+    state.orders[r.date][employeeId] = { menuId: r.menu_id, qty: r.qty || 1 };
+  });
+}
+
+/* ===================== ユーティリティ ===================== */
+function dayOfWeek(dateStr){
+  return new Date(dateStr+"T00:00:00").getDay(); // 0:日 ... 6:土
+}
+
+function isBlockedDate(dateStr){
+  return (state.blockedDates||[]).includes(dateStr);
+}
+
+function isBlockedWeekday(dateStr){
+  return (state.blockedWeekdays||[]).includes(dayOfWeek(dateStr));
+}
+
+function holidayName(dateStr){
+  return HOLIDAYS[dateStr] || null;
+}
+
+function isNonOrderableDay(dateStr){
+  return isBlockedDate(dateStr) || isBlockedWeekday(dateStr) || !!holidayName(dateStr);
+}
+
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+
+function fmtDateJP(dateStr){
+  const d = new Date(dateStr+"T00:00:00");
+  const days = ["日","月","火","水","木","金","土"];
+  return `${d.getMonth()+1}月${d.getDate()}日(${days[d.getDay()]})`;
+}
+
+// 指定した発注対象日の締切日時を計算
+function getDeadline(dateStr){
+  const target = new Date(dateStr+"T00:00:00");
+  target.setDate(target.getDate() - (state.deadline.daysBefore||0));
+  const [hh,mm] = (state.deadline.time||"15:00").split(":").map(Number);
+  target.setHours(hh, mm, 0, 0);
+  return target;
+}
+
+function isLocked(dateStr){
+  return new Date() > getDeadline(dateStr);
+}
+
+function fmtDeadline(dateStr){
+  const dl = getDeadline(dateStr);
+  return `${dl.getMonth()+1}/${dl.getDate()} ${String(dl.getHours()).padStart(2,"0")}:${String(dl.getMinutes()).padStart(2,"0")}`;
+}
+
+function shiftMonth(ym, delta){
+  let [y,m] = ym.split("-").map(Number);
+  m += delta;
+  while(m>12){ m-=12; y++; }
+  while(m<1){ m+=12; y--; }
+  return `${y}-${String(m).padStart(2,"0")}`;
+}
+
+function daysInMonth(ym){
+  const [y,m] = ym.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return Array.from({length:last}, (_,i)=> `${y}-${String(m).padStart(2,"0")}-${String(i+1).padStart(2,"0")}`);
+}
+
+// 発注月度: "YYYY-MM"（例: "2026-08" = 8月度）は「前月21日〜当月20日」を表す
+function periodRange(ym){
+  let [y,m] = ym.split("-").map(Number);
+  let sy = y, sm = m - 1;
+  if(sm < 1){ sm = 12; sy--; }
+  const start = `${sy}-${String(sm).padStart(2,"0")}-21`;
+  const end = `${y}-${String(m).padStart(2,"0")}-20`;
+  return { start, end };
+}
+
+function datesInRange(startStr, endStr){
+  const dates = [];
+  let cur = new Date(startStr+"T00:00:00");
+  const end = new Date(endStr+"T00:00:00");
+  while(cur <= end){
+    dates.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,"0")}-${String(cur.getDate()).padStart(2,"0")}`);
+    cur.setDate(cur.getDate()+1);
+  }
+  return dates;
+}
+
+function datesInPeriod(ym){
+  const {start, end} = periodRange(ym);
+  return datesInRange(start, end);
+}
+
+// 指定日が属する発注月度のラベル（"YYYY-MM"）を返す（21日以降ならその月の翌月扱い）
+function periodLabelFor(dateStr){
+  const d = new Date(dateStr+"T00:00:00");
+  let y = d.getFullYear(), m = d.getMonth()+1;
+  if(d.getDate() >= 21){
+    m += 1;
+    if(m > 12){ m = 1; y++; }
+  }
+  return `${y}-${String(m).padStart(2,"0")}`;
+}
+
+function existingMenuFor(empId, dateStr){
+  const o = state.orders[dateStr] && state.orders[dateStr][empId];
+  return o ? o.menuId : null;
+}
+
+function existingQtyFor(empId, dateStr){
+  const o = state.orders[dateStr] && state.orders[dateStr][empId];
+  return o ? (o.qty || 1) : 1;
+}
+
+// 管理者が本人に代わって登録した発注かどうか（本人の画面で分かるようにするため）
+function existingPlacedByAdminFor(empId, dateStr){
+  const o = state.orders[dateStr] && state.orders[dateStr][empId];
+  return !!(o && o.placedByAdmin);
+}
+
+function downloadFile(filename, content){
+  const blob = new Blob(["﻿"+content], {type:"text/csv;charset=utf-8"});
+  downloadBlob(filename, blob);
+}
+
+function downloadBlob(filename, blob){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 献立PDF（月別）: ファイル→base64 への変換と、base64→新規タブでのPDF表示を共通化する
+function fileToBase64(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      // reader.result は "data:application/pdf;base64,xxxx" 形式なので、カンマ以降のbase64部分だけ取り出す
+      const result = reader.result || "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = ()=> reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function openPdfFromBase64(base64){
+  const byteChars = atob(base64);
+  const byteNumbers = new Array(byteChars.length);
+  for(let i=0;i<byteChars.length;i++) byteNumbers[i] = byteChars.charCodeAt(i);
+  const byteArray = new Uint8Array(byteNumbers);
+  const blob = new Blob([byteArray], {type:"application/pdf"});
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+  // 開いたタブがPDFを読み込む時間を確保してからURLを解放する
+  setTimeout(()=> URL.revokeObjectURL(url), 60000);
+}
+
+/* ===================== 画面共通（読み込み中・エラー制御） ===================== */
+let currentTab = "order";
+let currentAdminSub = "employees";
+let isLoading = false;
+let loadError = "";
+
+const app = document.getElementById("app");
+
+document.getElementById("mainNav").addEventListener("click", (e)=>{
+  if(e.target.tagName !== "BUTTON") return;
+  currentTab = e.target.dataset.tab;
+  [...document.getElementById("mainNav").children].forEach(b=>b.classList.toggle("active", b===e.target));
+  if(currentTab === "admin" && session && session.isAdmin){
+    withLoading(()=> loadAdminSubData(currentAdminSub));
+  } else {
+    render();
+  }
+});
+
+// 他のタブ・別端末での操作（管理者による代理発注など）に気づけるよう、
+// ブラウザタブが再表示されたタイミングで発注画面のデータを静かに再取得する
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible" && session && currentTab === "order" && !isLoading){
+    loadMyOrdersForMonth(calendarYearMonth).then(render).catch(()=>{});
+  }
+});
+
+async function withLoading(fn){
+  isLoading = true; render();
+  try{
+    await fn();
+    loadError = "";
+  }catch(e){
+    if(e.message === "invalid_session"){
+      session = null; persistSession();
+      loginError = "セッションの有効期限が切れました。再度ログインしてください。";
+      loadError = "";
+    } else {
+      loadError = e.message || String(e);
+    }
+  }
+  isLoading = false;
+  render();
+}
+
+function render(){
+  if(isLoading){
+    app.innerHTML = `<div class="card"><div class="hint">読み込み中...</div></div>`;
+    return;
+  }
+  if(loadError){
+    app.innerHTML = `
+      <div class="card">
+        <div class="status-box status-lock">${loadError}</div>
+        <button class="secondary" id="reloadBtn">再読み込み</button>
+      </div>`;
+    document.getElementById("reloadBtn").onclick = ()=>{ loadError=""; boot(); };
+    return;
+  }
+  if(currentTab === "order") renderOrderTab();
+  else renderAdminTab();
+}
+
+/* ===================== 発注タブ（社員向け） ===================== */
+let loginError = "";
+let calendarYearMonth = periodLabelFor(todayStr()); // "YYYY-MM"（21日始まり20日締めの発注月度）
+let batchMessage = "";
+
+function renderOrderTab(){
+  if(!session){
+    renderLoginScreen();
+    return;
+  }
+
+  const dates = datesInPeriod(calendarYearMonth);
+  const {start: periodStart, end: periodEnd} = periodRange(calendarYearMonth);
+  const [ymYear, ymMonth] = calendarYearMonth.split("-");
+  // 給与天引きは、その月度の発注分が翌月の給与で天引きされる（例: 9月度の発注 → 10月度給与天引き）
+  const [deductionYear, deductionMonth] = shiftMonth(calendarYearMonth, 1).split("-");
+
+  const orderedDates = dates.filter(d=> existingMenuFor(session.employeeId, d));
+  const monthlyTotalAmount = orderedDates.reduce((sum, d)=>{
+    const menuId = existingMenuFor(session.employeeId, d);
+    const m = state.menu.find(x=>x.id===menuId);
+    return sum + priceForMenu(m) * existingQtyFor(session.employeeId, d);
+  }, 0);
+  const monthlyTotalQty = orderedDates.reduce((sum, d)=> sum + existingQtyFor(session.employeeId, d), 0);
+
+  app.innerHTML = `
+    <div class="card no-print">
+      <div class="row" style="align-items:center;">
+        <div>
+          <div class="hint" style="margin:0;">ログイン中</div>
+          <div style="font-size:16px;font-weight:bold;">${session.name}（${session.dept}）</div>
+        </div>
+        <button class="secondary" id="logoutBtn" style="flex:0 0 auto;">ログアウト（別の人が使う）</button>
+      </div>
+    </div>
+
+    <div class="card no-print">
+      <h2>対象月度</h2>
+      <div class="row" style="align-items:center;">
+        <button class="secondary" id="prevMonthBtn" style="flex:0 0 auto;">← 前月度</button>
+        <input type="month" id="monthSelect" value="${calendarYearMonth}">
+        <button class="secondary" id="nextMonthBtn" style="flex:0 0 auto;">次月度 →</button>
+      </div>
+      <div class="row" style="margin-top:4px;">
+        <button class="secondary" id="refreshOrdersBtn" style="flex:0 0 auto;">最新の状態に更新</button>
+      </div>
+      <div class="hint">締切ルール：${state.deadline.daysBefore>0 ? `対象日の${state.deadline.daysBefore}日前 ${state.deadline.time} まで` : `当日${state.deadline.time}まで`}<br>締切後に管理者が代わって登録した発注は、上の表に「（管理者が代理で登録しました）」と表示されます。表示されない場合は「最新の状態に更新」を押してください。</div>
+      ${(state.menuPdfsForMonth||[]).length ? `
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;">
+        ${state.menuPdfsForMonth.map(p=>`<button class="secondary" data-view-menu-pdf="${p.menu_id}" style="flex:0 0 auto;">献立を確認する（${p.menu_name}）</button>`).join("")}
+      </div>` : `<div class="hint">この月度の献立PDFはまだ登録されていません。</div>`}
+    </div>
+
+    <div class="card">
+      <h2>発注</h2>
+      <div class="table-scroll">
+      <table>
+        <tr>
+          <th>日付</th><th>状態</th>
+          ${state.menu.map(m=>`<th>${m.name}<br><span class="hint" style="margin:0;">¥${priceForMenu(m)}</span></th>`).join("")}
+          <th>数量</th>
+        </tr>
+        ${dates.map(d=>{
+          const holiday = holidayName(d);
+          const blockedDate = isBlockedDate(d);
+          const blockedWd = isBlockedWeekday(d);
+          const nonOrderable = blockedDate || blockedWd || !!holiday;
+          const locked = isLocked(d);
+          const existing = existingMenuFor(session.employeeId, d);
+          const existingQty = existingQtyFor(session.employeeId, d);
+          const existingByAdmin = existingPlacedByAdminFor(session.employeeId, d);
+          const existingMenuName = existing ? (state.menu.find(m=>m.id===existing)?.name || "―") : null;
+          const existingLabel = existingMenuName ? (existingQty > 1 ? `${existingMenuName} ×${existingQty}` : existingMenuName) : null;
+          const existingLabelHtml = existingLabel ? `${existingLabel}${existingByAdmin ? ' <span class="hint" style="margin:0;color:var(--sub);">（管理者が代理で登録しました）</span>' : ''}` : null;
+          const isToday = d === todayStr();
+          const todayCls = isToday ? " row-today" : "";
+          const todayMark = isToday ? ` <span class="today-badge">本日</span>` : "";
+          const rowIdAttr = isToday ? ` id="rowToday"` : "";
+          if(nonOrderable){
+            const label = holiday ? holiday : (blockedWd ? `${WEEKDAY_LABELS[dayOfWeek(d)]}曜休配` : "発注不可日");
+            return `<tr class="row-holiday${todayCls}"${rowIdAttr}>
+              <td>${fmtDateJP(d)}${todayMark}</td>
+              <td><span style="color:var(--sub);">休（${label}）</span></td>
+              <td colspan="${state.menu.length+1}">${existingLabelHtml ? existingLabelHtml : "発注不可"}</td>
+            </tr>`;
+          }
+          if(locked){
+            return `<tr class="row-holiday${todayCls}"${rowIdAttr}>
+              <td>${fmtDateJP(d)}${todayMark}</td>
+              <td><span style="color:var(--lock);">締切済み</span></td>
+              <td colspan="${state.menu.length+1}">${existingLabelHtml ? existingLabelHtml : "（発注なし）"}</td>
+            </tr>`;
+          }
+          return `<tr class="${todayCls.trim()}"${rowIdAttr}>
+            <td>${fmtDateJP(d)}${todayMark}${existingByAdmin ? ' <span class="hint" style="margin:0;color:var(--sub);">（代理登録）</span>' : ''}</td>
+            <td><span style="color:var(--ok);">受付中</span></td>
+            ${state.menu.map(m=>{
+              const menuBlocked = isMenuBlockedDate(m.id, d) && existing!==m.id;
+              return `
+              <td class="checkbox-col" style="width:auto;text-align:center;">
+                ${menuBlocked
+                  ? `<span class="hint" style="margin:0;">休止</span>`
+                  : `<input type="checkbox" class="calCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""} ${existing===m.id && existingByAdmin ? 'title="管理者が代理で登録しました"' : ''}>`}
+              </td>`;
+            }).join("")}
+            <td class="checkbox-col" style="width:56px;">
+              <input type="number" class="calQtyInput" data-date="${d}" min="1" value="${existing ? existingQty : ""}" style="width:52px;padding:4px;">
+            </td>
+          </tr>`;
+        }).join("")}
+      </table>
+      </div>
+      <div class="hint">1日につき1つのメニューにチェックしてください（別のメニューにチェックすると自動的に切り替わります）。<br>取り消す場合はチェックを外してください。数量は自動で0になります。<br>「数量」は通常1のままで構いません。複数個発注したい場合のみ変更してください。</div>
+      <button class="primary" id="batchOrderBtn">発注</button>
+      ${batchMessage ? `<div class="status-box status-ok">${batchMessage}</div>` : ""}
+    </div>
+
+    <div class="card">
+      <h2>${ymYear}年${Number(ymMonth)}月度の発注回数・金額（${Number(deductionYear)!==Number(ymYear) ? `${deductionYear}年` : ""}${Number(deductionMonth)}月給与天引き）</h2>
+      <table>
+        <tr><th>発注数量</th><th>金額</th></tr>
+        <tr><td>${monthlyTotalQty}</td><td>¥${monthlyTotalAmount.toLocaleString()}</td></tr>
+      </table>
+    </div>
+  `;
+
+  document.getElementById("logoutBtn").onclick = ()=>{
+    withLoading(async ()=>{ await logout(); batchMessage=""; });
+  };
+  document.getElementById("monthSelect").onchange = (e)=>{
+    if(e.target.value) calendarYearMonth = e.target.value;
+    batchMessage="";
+    withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
+  };
+  document.getElementById("prevMonthBtn").onclick = ()=>{
+    calendarYearMonth = shiftMonth(calendarYearMonth, -1);
+    batchMessage="";
+    withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
+  };
+  document.getElementById("nextMonthBtn").onclick = ()=>{
+    calendarYearMonth = shiftMonth(calendarYearMonth, 1);
+    batchMessage="";
+    withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
+  };
+  document.getElementById("refreshOrdersBtn").onclick = ()=>{
+    withLoading(()=> loadMyOrdersForMonth(calendarYearMonth));
+  };
+  document.querySelectorAll("[data-view-menu-pdf]").forEach(btn=>{
+    btn.onclick = ()=>{
+      withLoading(async ()=>{
+        try{
+          const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: calendarYearMonth, p_menu_id: btn.dataset.viewMenuPdf});
+          if(!rows || !rows.length){ alert("この献立PDFは見つかりませんでした"); return; }
+          openPdfFromBase64(rows[0].pdf_data);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  // 今の発注月度を表示している場合、本日の行が見える位置まで自動スクロール
+  if(calendarYearMonth === periodLabelFor(todayStr())){
+    const todayRow = document.getElementById("rowToday");
+    if(todayRow && todayRow.scrollIntoView){
+      todayRow.scrollIntoView({block:"center"});
+    }
+  }
+
+  // 同じ日で他のメニューにチェックが入ったら、その日の他のチェックボックスは自動的に外す（1日1食）。
+  // また、チェックを入れた際は数量に1を初期値として入れ、その日のチェックが全て外れたら数量を空欄に戻す。
+  document.querySelectorAll(".calCheckbox").forEach(cb=>{
+    cb.onchange = ()=>{
+      const qtyInput = document.querySelector(`.calQtyInput[data-date="${cb.dataset.date}"]`);
+      if(cb.checked){
+        document.querySelectorAll(`.calCheckbox[data-date="${cb.dataset.date}"]`).forEach(other=>{
+          if(other !== cb) other.checked = false;
+        });
+        if(qtyInput && !qtyInput.value) qtyInput.value = "1";
+      } else {
+        const stillChecked = document.querySelector(`.calCheckbox[data-date="${cb.dataset.date}"]:checked`);
+        if(!stillChecked && qtyInput) qtyInput.value = "";
+      }
+    };
+  });
+
+  document.getElementById("batchOrderBtn").onclick = ()=>{
+    const changes = collectOrderChanges(); // DOMが生きているうちに同期的に取得
+    withLoading(()=> placeBatchOrders(changes));
+  };
+}
+
+function renderLoginScreen(){
+  app.innerHTML = `
+    <div class="card">
+      <h2>社員CDでログイン</h2>
+      <div class="hint">ここでログインすると、発注タブと管理タブ（管理者権限がある場合）の両方で共通して使用されます。</div>
+      <label>社員CD</label>
+      <input type="text" id="loginCode" placeholder="例: 1001" autocomplete="off" inputmode="numeric">
+      ${loginError ? `<div class="status-box status-lock">${loginError}</div>` : ""}
+      <button class="primary" id="loginBtn">ログイン</button>
+    </div>
+  `;
+  const codeInput = document.getElementById("loginCode");
+  const doLogin = ()=>{
+    withLoading(async ()=>{
+      const ok = await loginWithCode(codeInput.value);
+      if(ok){
+        await loadSettings();
+        await loadMyOrdersForMonth(calendarYearMonth);
+        batchMessage = "";
+      }
+    });
+  };
+  document.getElementById("loginBtn").onclick = doLogin;
+  codeInput.onkeydown = (e)=>{ if(e.key === "Enter") doLogin(); };
+  codeInput.focus();
+}
+
+// チェックボックスの状態から変更点を集める。DOMがまだ生きている「クリックされた瞬間」に
+// 同期的に呼び出すこと（withLoadingが読み込み中画面を表示してDOMを差し替えた後だと
+// チェックボックスが消えてしまい、変更点を検出できなくなるため）。
+function collectOrderChanges(){
+  const changes = [];
+  datesInPeriod(calendarYearMonth).forEach(d=>{
+    if(isLocked(d) || isNonOrderableDay(d)) return; // 念のため締切済み・発注不可日は無視
+    const checked = document.querySelector(`.calCheckbox[data-date="${d}"]:checked`);
+    const menuId = checked ? checked.dataset.menu : null;
+    const qtyInput = document.querySelector(`.calQtyInput[data-date="${d}"]`);
+    const qty = Math.max(1, parseInt(qtyInput && qtyInput.value, 10) || 1);
+    const existing = existingMenuFor(session.employeeId, d);
+    const existingQty = existingQtyFor(session.employeeId, d);
+    if(menuId){
+      if(existing !== menuId || existingQty !== qty) changes.push({date:d, action:"place", menuId, qty});
+    } else if(existing){
+      changes.push({date:d, action:"cancel"});
+    }
+  });
+  return changes;
+}
+
+async function placeBatchOrders(changes){
+  let ordered = 0, cancelled = 0, failed = 0;
+  for(const c of changes){
+    try{
+      if(c.action === "place"){
+        await sbRpc("rpc_place_order", {p_token: session.token, p_date: c.date, p_menu_id: c.menuId, p_qty: c.qty || 1});
+        if(!state.orders[c.date]) state.orders[c.date] = {};
+        state.orders[c.date][session.employeeId] = { menuId: c.menuId, qty: c.qty || 1, placedByAdmin: false };
+        ordered++;
+      } else {
+        await sbRpc("rpc_cancel_order", {p_token: session.token, p_date: c.date});
+        if(state.orders[c.date]) delete state.orders[c.date][session.employeeId];
+        cancelled++;
+      }
+    }catch(e){
+      failed++;
+    }
+  }
+  const parts = [];
+  if(ordered) parts.push(`${ordered}件を発注しました`);
+  if(cancelled) parts.push(`${cancelled}件を取り消しました`);
+  if(failed) parts.push(`${failed}件は失敗しました`);
+  batchMessage = parts.length ? parts.join(" / ") : "変更はありませんでした";
+}
+
+/* ===================== 管理タブ ===================== */
+// 管理タブは発注タブと共通の session を使用する。
+// 未ログインならログインを促し、ログイン済みでも管理者権限（isAdmin）がなければアクセスさせない。
+
+async function loadAdminSubData(sub){
+  if(sub === "employees"){
+    const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+    state.employees = rows.map(mapEmployee);
+  } else if(sub === "menu"){
+    const rows = await sbRpc("rpc_admin_list_menu", {p_token: session.token});
+    state.adminMenu = rows.map(mapMenuAdmin);
+    state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
+    state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+  } else if(sub === "summary"){
+    summaryRows = await sbRpc("rpc_admin_orders_for_date", {p_token: session.token, p_date: summaryDate});
+    // FAX送付状の印刷に業者FAX番号・締切時間・コース名・お客様番号が必要なため、未取得なら合わせて取得する
+    if(!state.adminMenu.length){
+      const menuRows = await sbRpc("rpc_admin_list_menu", {p_token: session.token});
+      state.adminMenu = menuRows.map(mapMenuAdmin);
+    }
+  } else if(sub === "receipt"){
+    receiptRows = await sbRpc("rpc_admin_orders_for_date", {p_token: session.token, p_date: receiptDate});
+  } else if(sub === "proxy"){
+    if(!state.employees.length){
+      const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+      state.employees = rows.map(mapEmployee);
+    }
+    if(!proxyEmployeeId && state.employees.length) proxyEmployeeId = state.employees[0].id;
+    if(proxyEmployeeId) await loadProxyOrdersForPeriod(proxyEmployeeId, proxyYm);
+  }
+  // deadline / monthly サブタブは既にグローバルで読み込み済みのデータ、または操作時に都度取得するデータを使う
+}
+
+function renderAdminAccessScreen(){
+  if(session && !session.isAdmin){
+    app.innerHTML = `
+      <div class="card">
+        <h2>管理タブ</h2>
+        <div class="status-box status-lock">現在ログイン中の「${session.name}」は管理者権限を持っていません。</div>
+        <div class="hint">管理者権限のある社員CDでログインし直してください。</div>
+        <button class="secondary" id="switchAccountBtn">ログアウトして別のアカウントでログイン</button>
+      </div>
+    `;
+    document.getElementById("switchAccountBtn").onclick = ()=>{
+      withLoading(async ()=>{ await logout(); });
+    };
+    return;
+  }
+  // 未ログインの場合はここで直接ログインできるようにする
+  app.innerHTML = `
+    <div class="card">
+      <h2>管理タブ</h2>
+      <div class="hint">管理者権限のある社員CDでログインしてください。一度ログインすれば、発注タブ・管理タブの両方でそのまま利用できます。</div>
+      <label>社員CD</label>
+      <input type="text" id="adminAccessCode" placeholder="例: 9999" autocomplete="off" inputmode="numeric">
+      ${loginError ? `<div class="status-box status-lock">${loginError}</div>` : ""}
+      <button class="primary" id="adminAccessBtn">ログイン</button>
+    </div>
+  `;
+  const codeInput = document.getElementById("adminAccessCode");
+  const doLogin = ()=>{
+    withLoading(async ()=>{
+      const ok = await loginWithCode(codeInput.value);
+      if(ok){
+        await loadSettings();
+        if(session.isAdmin){
+          await loadAdminSubData(currentAdminSub);
+        }
+      }
+    });
+  };
+  document.getElementById("adminAccessBtn").onclick = doLogin;
+  codeInput.onkeydown = (e)=>{ if(e.key === "Enter") doLogin(); };
+  codeInput.focus();
+}
+
+function renderAdminTab(){
+  if(!session || !session.isAdmin){
+    renderAdminAccessScreen();
+    return;
+  }
+
+  app.innerHTML = `
+    <div class="card no-print">
+      <div class="row" style="align-items:center;">
+        <div>
+          <div class="hint" style="margin:0;">ログイン中（管理者）</div>
+          <div style="font-size:16px;font-weight:bold;">${session.name}（${session.dept}）</div>
+        </div>
+        <button class="secondary" id="adminLogoutBtn" style="flex:0 0 auto;">ログアウト</button>
+      </div>
+    </div>
+    <div class="subtabs no-print" id="adminSubtabs">
+      <button data-sub="employees">対象者リスト</button>
+      <button data-sub="menu">メニュー管理</button>
+      <button data-sub="deadline">締切設定</button>
+      <button data-sub="summary">発注集計・発注書</button>
+      <button data-sub="receipt">受取確認リスト</button>
+      <button data-sub="monthly">月次集計</button>
+      <button data-sub="proxy">代理発注・修正</button>
+    </div>
+    <div id="adminContent"></div>
+  `;
+  document.getElementById("adminLogoutBtn").onclick = ()=>{
+    withLoading(async ()=>{ await logout(); });
+  };
+  [...document.getElementById("adminSubtabs").children].forEach(b=>{
+    b.classList.toggle("active", b.dataset.sub===currentAdminSub);
+    b.onclick = ()=>{
+      currentAdminSub = b.dataset.sub;
+      withLoading(()=> loadAdminSubData(currentAdminSub));
+    };
+  });
+  const content = document.getElementById("adminContent");
+  if(currentAdminSub==="employees") renderEmployeesAdmin(content);
+  else if(currentAdminSub==="menu") renderMenuAdmin(content);
+  else if(currentAdminSub==="deadline") renderDeadlineAdmin(content);
+  else if(currentAdminSub==="summary") renderSummaryAdmin(content);
+  else if(currentAdminSub==="receipt") renderReceiptAdmin(content);
+  else if(currentAdminSub==="monthly") renderMonthlyAdmin(content);
+  else if(currentAdminSub==="proxy") renderProxyAdmin(content);
+}
+
+/* --- 対象者リスト管理 --- */
+// 対象者一覧の並び順（組織コード基準）。ヘッダークリックで昇順/降順を切り替え可能。
+let empSortAsc = true;
+function sortedEmployeesList(){
+  return [...state.employees].sort((a,b)=>{
+    const cmp = (a.orgCode||"").localeCompare(b.orgCode||"", "ja", {numeric:true});
+    if(cmp !== 0) return empSortAsc ? cmp : -cmp;
+    return (a.code||"").localeCompare(b.code||"", "ja", {numeric:true});
+  });
+}
+
+function renderEmployeesAdmin(container){
+  const list = sortedEmployeesList();
+  container.innerHTML = `
+    <div class="card">
+      <h2>対象者を追加</h2>
+      <div class="row">
+        <input type="text" id="newEmpCode" placeholder="社員CD">
+        <input type="text" id="newEmpName" placeholder="氏名">
+        <input type="text" id="newEmpDept" placeholder="部署">
+        <input type="text" id="newEmpOrgCode" placeholder="組織コード">
+        <input type="text" id="newEmpAggDept" placeholder="集計用部署名">
+        <select id="newEmpType">
+          <option value="employee">社員</option>
+          <option value="executive">役員</option>
+          <option value="dispatch">派遣</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:4px;flex:0 0 auto;min-width:auto;margin:0;">
+          <input type="checkbox" id="newEmpIsAdmin"> 管理者
+        </label>
+        <button class="secondary" id="addEmpBtn" style="flex:0 0 auto;">追加</button>
+      </div>
+      <div class="hint">社員CDは発注画面・管理タブ共通のログインIDです。重複しない値を設定してください。「管理者」にチェックすると、その社員CDで管理タブにログインできるようになります。組織コードは受取確認リストの所属グループ表示・一覧の並び順に使用します。区分（社員/役員/派遣）に応じて、発注画面・集計で対応する価格が適用されます。集計用部署名は、月次集計の部署別集計でグループ分けに使う名称です（未入力の場合は部署別集計に含まれません）。</div>
+    </div>
+    <div class="card">
+      <h2>CSV一括取込・出力</h2>
+      <div class="hint">CSV形式: 社員CD,氏名,部署,組織コード,区分,集計用部署名（区分はemployee/executive/dispatch。1行目はヘッダーでも可）。社員CDが既に登録されている場合は、氏名・部署などの情報を上書き更新します（新規の社員CDのみ新規登録）。CSV取込で管理者権限が変わることはありません（一覧から個別に設定してください）。</div>
+      <input type="file" id="csvInput" accept=".csv" style="margin-top:8px;">
+      <div class="row" style="margin-top:10px;">
+        <button class="secondary" id="csvExportBtn">CSVで出力</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>対象者一覧（${state.employees.length}名）</h2>
+      <div class="hint">「組織コード」の見出しをクリックすると並び順（昇順⇔降順）を切り替えられます。左端のチェックボックスで複数選択し、下の「選択した対象者を削除」でまとめて削除できます。</div>
+      <div class="no-print" style="margin-bottom:8px;">
+        <button class="danger" id="bulkDeleteEmpBtn">選択した対象者を削除</button>
+      </div>
+      <table>
+        <tr>
+          <th class="no-print"><input type="checkbox" id="selectAllEmpCheckbox"></th>
+          <th>社員CD</th><th>氏名</th><th>部署</th>
+          <th id="orgCodeSortHeader" style="cursor:pointer;white-space:nowrap;">組織コード ${empSortAsc ? "▲" : "▼"}</th>
+          <th>集計用部署名</th>
+          <th>管理者</th><th>区分</th><th class="no-print">操作</th>
+        </tr>
+        ${list.map(e=>`
+          <tr>
+            <td class="no-print" style="text-align:center;"><input type="checkbox" class="empSelectCheckbox" data-id="${e.id}"></td>
+            <td><input type="text" data-field="code" data-id="${e.id}" value="${e.code||""}"></td>
+            <td><input type="text" data-field="name" data-id="${e.id}" value="${e.name}"></td>
+            <td><input type="text" data-field="dept" data-id="${e.id}" value="${e.dept}"></td>
+            <td><input type="text" data-field="orgCode" data-id="${e.id}" value="${e.orgCode||""}"></td>
+            <td><input type="text" data-field="aggDept" data-id="${e.id}" value="${e.aggDept||""}"></td>
+            <td style="text-align:center;"><input type="checkbox" class="adminCheckbox" data-id="${e.id}" ${e.isAdmin?"checked":""}></td>
+            <td>
+              <select class="employeeTypeSelect" data-id="${e.id}">
+                <option value="employee" ${e.employeeType==="employee"?"selected":""}>社員</option>
+                <option value="executive" ${e.employeeType==="executive"?"selected":""}>役員</option>
+                <option value="dispatch" ${e.employeeType==="dispatch"?"selected":""}>派遣</option>
+              </select>
+            </td>
+            <td class="no-print"><button class="danger" data-del="${e.id}">削除</button></td>
+          </tr>`).join("")}
+      </table>
+    </div>
+  `;
+
+  container.querySelector("#orgCodeSortHeader").onclick = ()=>{
+    empSortAsc = !empSortAsc;
+    renderEmployeesAdmin(container);
+  };
+
+  container.querySelector("#addEmpBtn").onclick = ()=>{
+    const code = container.querySelector("#newEmpCode").value.trim();
+    const name = container.querySelector("#newEmpName").value.trim();
+    const dept = container.querySelector("#newEmpDept").value.trim();
+    const orgCode = container.querySelector("#newEmpOrgCode").value.trim();
+    const aggDept = container.querySelector("#newEmpAggDept").value.trim();
+    const employeeType = container.querySelector("#newEmpType").value;
+    const isAdmin = container.querySelector("#newEmpIsAdmin").checked;
+    if(!name || !code){ alert("社員CDと氏名は必須です"); return; }
+    withLoading(async ()=>{
+      try{
+        await sbRpc("rpc_admin_upsert_employee", {p_token: session.token, p_id: null, p_code: code, p_name: name, p_dept: dept, p_is_admin: isAdmin, p_org_code: orgCode, p_employee_type: employeeType, p_agg_dept: aggDept});
+        const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+        state.employees = rows.map(mapEmployee);
+      }catch(e){ alert(friendlyError(e)); }
+    });
+  };
+
+  container.querySelectorAll("input[data-field]").forEach(inp=>{
+    inp.onchange = ()=>{
+      const emp = state.employees.find(x=>x.id===inp.dataset.id);
+      if(!emp) return;
+      const updated = Object.assign({}, emp, {[inp.dataset.field]: inp.value});
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_upsert_employee", {p_token: session.token, p_id: updated.id, p_code: updated.code, p_name: updated.name, p_dept: updated.dept, p_is_admin: updated.isAdmin, p_org_code: updated.orgCode||"", p_employee_type: updated.employeeType||"employee", p_agg_dept: updated.aggDept||""});
+          const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+          state.employees = rows.map(mapEmployee);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelectorAll(".adminCheckbox").forEach(cb=>{
+    cb.onchange = ()=>{
+      const emp = state.employees.find(x=>x.id===cb.dataset.id);
+      if(!emp) return;
+      if(!cb.checked){
+        const otherAdmins = state.employees.filter(e=>e.isAdmin && e.id!==emp.id).length;
+        if(otherAdmins === 0){
+          alert("最後の管理者アカウントの権限は外せません。先に別の管理者を設定してください。");
+          cb.checked = true;
+          return;
+        }
+      }
+      const updated = Object.assign({}, emp, {isAdmin: cb.checked});
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_upsert_employee", {p_token: session.token, p_id: updated.id, p_code: updated.code, p_name: updated.name, p_dept: updated.dept, p_is_admin: updated.isAdmin, p_org_code: updated.orgCode||"", p_employee_type: updated.employeeType||"employee", p_agg_dept: updated.aggDept||""});
+          const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+          state.employees = rows.map(mapEmployee);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelectorAll(".employeeTypeSelect").forEach(sel=>{
+    sel.onchange = ()=>{
+      const emp = state.employees.find(x=>x.id===sel.dataset.id);
+      if(!emp) return;
+      const updated = Object.assign({}, emp, {employeeType: sel.value});
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_upsert_employee", {p_token: session.token, p_id: updated.id, p_code: updated.code, p_name: updated.name, p_dept: updated.dept, p_is_admin: updated.isAdmin, p_org_code: updated.orgCode||"", p_employee_type: updated.employeeType||"employee", p_agg_dept: updated.aggDept||""});
+          const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+          state.employees = rows.map(mapEmployee);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelectorAll("[data-del]").forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!confirm("この対象者を削除しますか？")) return;
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_delete_employee", {p_token: session.token, p_id: btn.dataset.del});
+          const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+          state.employees = rows.map(mapEmployee);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelector("#selectAllEmpCheckbox").onchange = (e)=>{
+    container.querySelectorAll(".empSelectCheckbox").forEach(cb=>{ cb.checked = e.target.checked; });
+  };
+
+  container.querySelector("#bulkDeleteEmpBtn").onclick = ()=>{
+    const selectedIds = Array.from(container.querySelectorAll(".empSelectCheckbox:checked")).map(cb=>cb.dataset.id);
+    if(!selectedIds.length){ alert("削除する対象者を選択してください"); return; }
+    // 選択した対象者を削除した結果、管理者が1人もいなくなる場合は誤操作防止のため中止する
+    const remainingAdmins = state.employees.filter(e=> e.isAdmin && !selectedIds.includes(e.id)).length;
+    if(remainingAdmins === 0){
+      alert("選択した対象者を削除すると、管理者権限を持つ対象者が1人もいなくなります。先に他の対象者へ管理者権限を設定してから削除してください。");
+      return;
+    }
+    if(!confirm(`選択した${selectedIds.length}件の対象者を削除しますか？この操作は取り消せません。`)) return;
+    withLoading(async ()=>{
+      let deleted = 0, failed = 0;
+      for(const id of selectedIds){
+        try{
+          await sbRpc("rpc_admin_delete_employee", {p_token: session.token, p_id: id});
+          deleted++;
+        }catch(e){ failed++; }
+      }
+      const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+      state.employees = rows.map(mapEmployee);
+      alert(`${deleted}件を削除しました${failed ? `（${failed}件は失敗しました）` : ""}`);
+    });
+  };
+
+  container.querySelector("#csvInput").onchange = (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const lines = reader.result.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
+      withLoading(async ()=>{
+        let added = 0, updated = 0, skipped = 0;
+        for(const line of lines){
+          const parts = line.split(",").map(p=>p.trim());
+          if(parts[0] === "社員CD" || parts[0] === "氏名" || parts[0] === "code") continue;
+          const [code, name, dept, orgCode, typeRaw, aggDept] = parts;
+          if(!code || !name) continue;
+          // 社員CDが既存の対象者と一致する場合は、その対象者を上書き更新する（新規登録ではなく更新扱い）
+          const existing = state.employees.find(x=>x.code===code);
+          // CSVに組織コード・区分・集計用部署名の列が無い場合は、既存の値を保持する（誤って空欄で上書きしないため）
+          const finalOrgCode = parts.length >= 4 ? (orgCode||"") : (existing ? (existing.orgCode||"") : "");
+          let employeeType;
+          if(parts.length >= 5){
+            employeeType = "employee";
+            if(typeRaw === "executive" || typeRaw === "役員") employeeType = "executive";
+            else if(typeRaw === "dispatch" || typeRaw === "派遣") employeeType = "dispatch";
+          } else {
+            employeeType = existing ? existing.employeeType : "employee";
+          }
+          const finalAggDept = parts.length >= 6 ? (aggDept||"") : (existing ? (existing.aggDept||"") : "");
+          try{
+            await sbRpc("rpc_admin_upsert_employee", {
+              p_token: session.token,
+              p_id: existing ? existing.id : null,
+              p_code: code,
+              p_name: name,
+              p_dept: dept||"",
+              p_is_admin: existing ? existing.isAdmin : false,
+              p_org_code: finalOrgCode,
+              p_employee_type: employeeType,
+              p_agg_dept: finalAggDept
+            });
+            if(existing) updated++; else added++;
+          }catch(err){ skipped++; }
+        }
+        const rows = await sbRpc("rpc_admin_list_employees", {p_token: session.token});
+        state.employees = rows.map(mapEmployee);
+        alert(`${added}件を新規追加、${updated}件を更新しました${skipped ? `（${skipped}件は失敗しました）` : ""}`);
+      });
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  container.querySelector("#csvExportBtn").onclick = ()=>{
+    const csv = "社員CD,氏名,部署,組織コード,区分,集計用部署名\n" + state.employees.map(e=>`${e.code||""},${e.name},${e.dept},${e.orgCode||""},${e.employeeType||"employee"},${e.aggDept||""}`).join("\n");
+    downloadFile("対象者リスト.csv", csv);
+  };
+}
+
+/* --- メニュー管理 --- */
+// メニュー管理画面での変更後、発注画面用（state.menu）と管理画面用（state.adminMenu）の両方を再取得する
+async function reloadMenuEverywhere(){
+  await loadMenu();
+  const rows = await sbRpc("rpc_admin_list_menu", {p_token: session.token});
+  state.adminMenu = rows.map(mapMenuAdmin);
+}
+
+function renderMenuAdmin(container){
+  const list = state.adminMenu || [];
+  const blocked = [...(state.blockedDates||[])].sort();
+  const blockedGroups = groupConsecutiveDates(blocked);
+
+  // メニュー別発注不可日: メニューごとにグループ化し、連続した日付は範囲表示にまとめる
+  const menuBlockedByMenu = {};
+  (state.menuBlockedDatesAdmin||[]).forEach(r=>{
+    if(!menuBlockedByMenu[r.menu_id]) menuBlockedByMenu[r.menu_id] = { menuName: r.menu_name, dates: [] };
+    menuBlockedByMenu[r.menu_id].dates.push(r.date);
+  });
+  const menuBlockedGroupsFlat = [];
+  Object.keys(menuBlockedByMenu).forEach(menuId=>{
+    const entry = menuBlockedByMenu[menuId];
+    const sortedDates = [...entry.dates].sort();
+    groupConsecutiveDates(sortedDates).forEach(([s,e])=>{
+      menuBlockedGroupsFlat.push({ menuId, menuName: entry.menuName, s, e });
+    });
+  });
+
+  container.innerHTML = `
+    <div class="card">
+      <h2>弁当メニューを追加</h2>
+      <div class="row">
+        <input type="text" id="newMenuName" placeholder="メニュー名">
+        <input type="number" id="newMenuPriceEmployee" placeholder="価格（社員）">
+        <input type="number" id="newMenuPriceExecutive" placeholder="価格（役員）">
+        <input type="number" id="newMenuPriceDispatch" placeholder="価格（派遣）">
+        <input type="text" id="newMenuFax" placeholder="発注先FAX番号">
+        <button class="secondary" id="addMenuBtn" style="flex:0 0 auto;">追加</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <input type="text" id="newMenuDeadlineTime" placeholder="締切時間（例: 10:00）">
+        <input type="text" id="newMenuCourseName" placeholder="コース名">
+        <input type="text" id="newMenuCustomerNumber" placeholder="お客様番号">
+      </div>
+      <div class="hint">「価格（社員）」「価格（役員）」「価格（派遣）」はそれぞれ発注画面・集計に反映されます。「発注先FAX番号」は発注画面には表示されません（管理者のみが確認できます）。締切時間・コース名・お客様番号をFAX送付状に印字するかどうかは、追加後に下の一覧にある「FAXに反映」のチェックで設定してください。</div>
+    </div>
+    <div class="card">
+      <h2>メニュー一覧</h2>
+      <div class="table-scroll">
+      <table>
+        <tr>
+          <th>メニュー名</th><th>価格（社員）</th><th>価格（役員）</th><th>価格（派遣）</th><th>発注先FAX番号</th>
+          <th>締切時間</th><th>コース名</th><th>お客様番号</th><th class="no-print">操作</th>
+        </tr>
+        ${list.map(m=>`
+          <tr>
+            <td><input type="text" data-field="name" data-id="${m.id}" value="${m.name}"></td>
+            <td><input type="number" data-field="priceEmployee" data-id="${m.id}" value="${m.priceEmployee}"></td>
+            <td><input type="number" data-field="priceExecutive" data-id="${m.id}" value="${m.priceExecutive}"></td>
+            <td><input type="number" data-field="priceDispatch" data-id="${m.id}" value="${m.priceDispatch}"></td>
+            <td><input type="text" data-field="faxNumber" data-id="${m.id}" value="${m.faxNumber||""}"></td>
+            <td>
+              <input type="text" data-field="deadlineTime" data-id="${m.id}" value="${m.deadlineTime||""}" placeholder="例: 10:00" style="width:90px;">
+              <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:12px;color:var(--sub);">
+                <input type="checkbox" data-field="deadlineTimeShow" data-id="${m.id}" ${m.deadlineTimeShow?"checked":""}> FAXに反映
+              </label>
+            </td>
+            <td>
+              <input type="text" data-field="courseName" data-id="${m.id}" value="${m.courseName||""}" style="width:100px;">
+              <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:12px;color:var(--sub);">
+                <input type="checkbox" data-field="courseNameShow" data-id="${m.id}" ${m.courseNameShow?"checked":""}> FAXに反映
+              </label>
+            </td>
+            <td>
+              <input type="text" data-field="customerNumber" data-id="${m.id}" value="${m.customerNumber||""}" style="width:100px;">
+              <label style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:12px;color:var(--sub);">
+                <input type="checkbox" data-field="customerNumberShow" data-id="${m.id}" ${m.customerNumberShow?"checked":""}> FAXに反映
+              </label>
+            </td>
+            <td class="no-print"><button class="danger" data-del="${m.id}">削除</button></td>
+          </tr>`).join("")}
+      </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>月別献立PDFの登録</h2>
+      <div class="hint">対象月度（発注月度：21日始まり20日締め）とメニューを選んでPDFを登録すると、発注画面の「献立を確認する（メニュー名）」ボタンからそのメニューの献立表を確認できるようになります。同じ月度・メニューの組み合わせに再登録すると上書きされます。</div>
+      <div class="row" style="margin-top:8px;">
+        <input type="month" id="menuPdfYm" value="${calendarYearMonth}">
+        <select id="menuPdfMenuId">
+          ${list.length ? list.map(m=>`<option value="${m.id}">${m.name}</option>`).join("") : `<option value="">（メニューが登録されていません）</option>`}
+        </select>
+        <input type="file" id="menuPdfFile" accept="application/pdf">
+        <button class="secondary" id="uploadMenuPdfBtn" style="flex:0 0 auto;">登録</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>登録済み献立PDF一覧（${(state.menuPdfList||[]).length}件）</h2>
+      <table>
+        <tr><th>月度</th><th>メニュー</th><th>ファイル名</th><th>登録日時</th><th class="no-print">操作</th></tr>
+        ${(state.menuPdfList||[]).length ? state.menuPdfList.map(p=>`
+          <tr>
+            <td>${p.ym}</td>
+            <td>${p.menu_name||""}</td>
+            <td>${p.filename||""}</td>
+            <td>${p.updated_at ? new Date(p.updated_at).toLocaleString("ja-JP") : ""}</td>
+            <td class="no-print">
+              <button class="secondary" data-view-pdf="${p.ym}" data-view-pdf-menu="${p.menu_id}">確認</button>
+              <button class="danger" data-del-pdf="${p.ym}" data-del-pdf-menu="${p.menu_id}">削除</button>
+            </td>
+          </tr>`).join("") : `<tr><td colspan="5" class="hint">まだ登録されていません</td></tr>`}
+      </table>
+    </div>
+    <div class="card">
+      <h2>発注不可日</h2>
+      <div class="hint">指定した日付は発注画面でグレー表示になり発注できません（祝日は自動で発注不可になります）。「全メニュー」を選ぶと従来通り全てのメニューが発注不可になり、特定のメニューを選ぶとそのメニューだけが休止になります（他のメニューは通常通り発注できます）。</div>
+      <div class="row" style="align-items:center;margin-top:8px;">
+        <label style="flex:0 0 auto;margin:0;">対象</label>
+        <select id="blockedScope">
+          <option value="all">全メニュー</option>
+          ${list.map(m=>`<option value="${m.id}">${m.name}のみ</option>`).join("")}
+        </select>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <input type="date" id="newBlockedDate">
+        <button class="secondary" id="addBlockedDateBtn" style="flex:0 0 auto;">追加</button>
+      </div>
+      <div class="hint" style="margin-top:14px;">夏季休業・年末年始などの長期連休は、開始日と終了日を指定してまとめて登録できます。</div>
+      <div class="row" style="align-items:center;">
+        <input type="date" id="rangeBlockedStart">
+        <span style="flex:0 0 auto;">〜</span>
+        <input type="date" id="rangeBlockedEnd">
+        <button class="secondary" id="addBlockedRangeBtn" style="flex:0 0 auto;">期間で追加</button>
+      </div>
+      <h3 style="margin-top:20px;">全メニュー共通の発注不可日</h3>
+      <table style="margin-top:10px;">
+        <tr><th>日付</th><th class="no-print">操作</th></tr>
+        ${blockedGroups.length ? blockedGroups.map(([s,e])=>`
+          <tr>
+            <td>${s===e ? fmtDateJP(s) : `${fmtDateJP(s)} 〜 ${fmtDateJP(e)}`}</td>
+            <td class="no-print"><button class="danger" data-del-range-start="${s}" data-del-range-end="${e}">削除</button></td>
+          </tr>`).join("") : `<tr><td colspan="2" class="hint">登録されている発注不可日はありません</td></tr>`}
+      </table>
+      <h3 style="margin-top:20px;">メニュー別の発注不可日</h3>
+      <table style="margin-top:10px;">
+        <tr><th>メニュー</th><th>日付</th><th class="no-print">操作</th></tr>
+        ${menuBlockedGroupsFlat.length ? menuBlockedGroupsFlat.map(({menuId, menuName, s, e})=>`
+          <tr>
+            <td>${menuName}</td>
+            <td>${s===e ? fmtDateJP(s) : `${fmtDateJP(s)} 〜 ${fmtDateJP(e)}`}</td>
+            <td class="no-print"><button class="danger" data-del-menu-range-menu="${menuId}" data-del-menu-range-start="${s}" data-del-menu-range-end="${e}">削除</button></td>
+          </tr>`).join("") : `<tr><td colspan="3" class="hint">登録されているメニュー別発注不可日はありません</td></tr>`}
+      </table>
+    </div>
+  `;
+
+  container.querySelector("#addMenuBtn").onclick = ()=>{
+    const name = container.querySelector("#newMenuName").value.trim();
+    const priceEmployee = Number(container.querySelector("#newMenuPriceEmployee").value) || 0;
+    const priceExecutive = Number(container.querySelector("#newMenuPriceExecutive").value) || 0;
+    const priceDispatch = Number(container.querySelector("#newMenuPriceDispatch").value) || 0;
+    const faxNumber = container.querySelector("#newMenuFax").value.trim();
+    const deadlineTime = container.querySelector("#newMenuDeadlineTime").value.trim();
+    const courseName = container.querySelector("#newMenuCourseName").value.trim();
+    const customerNumber = container.querySelector("#newMenuCustomerNumber").value.trim();
+    if(!name) return;
+    withLoading(async ()=>{
+      try{
+        await sbRpc("rpc_admin_upsert_menu", {
+          p_token: session.token, p_id: null, p_name: name,
+          p_price_employee: priceEmployee, p_price_executive: priceExecutive, p_price_dispatch: priceDispatch,
+          p_fax_number: faxNumber,
+          p_deadline_time: deadlineTime, p_deadline_time_show: false,
+          p_course_name: courseName, p_course_name_show: false,
+          p_customer_number: customerNumber, p_customer_number_show: false
+        });
+        await reloadMenuEverywhere();
+      }catch(e){ alert(friendlyError(e)); }
+    });
+  };
+
+  container.querySelectorAll("input[data-field]").forEach(inp=>{
+    inp.onchange = ()=>{
+      const m = list.find(x=>x.id===inp.dataset.id);
+      if(!m) return;
+      const isNumberField = inp.dataset.field==="priceEmployee" || inp.dataset.field==="priceExecutive" || inp.dataset.field==="priceDispatch";
+      const isCheckboxField = inp.type === "checkbox";
+      const value = isCheckboxField ? inp.checked : (isNumberField ? Number(inp.value) : inp.value);
+      const updated = Object.assign({}, m, {[inp.dataset.field]: value});
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_upsert_menu", {
+            p_token: session.token, p_id: updated.id, p_name: updated.name,
+            p_price_employee: updated.priceEmployee, p_price_executive: updated.priceExecutive, p_price_dispatch: updated.priceDispatch,
+            p_fax_number: updated.faxNumber||"",
+            p_deadline_time: updated.deadlineTime||"", p_deadline_time_show: !!updated.deadlineTimeShow,
+            p_course_name: updated.courseName||"", p_course_name_show: !!updated.courseNameShow,
+            p_customer_number: updated.customerNumber||"", p_customer_number_show: !!updated.customerNumberShow
+          });
+          await reloadMenuEverywhere();
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelectorAll("[data-del]").forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!confirm("このメニューを削除しますか？")) return;
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_delete_menu", {p_token: session.token, p_id: btn.dataset.del});
+          await reloadMenuEverywhere();
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelector("#uploadMenuPdfBtn").onclick = ()=>{
+    const ym = container.querySelector("#menuPdfYm").value;
+    const menuId = container.querySelector("#menuPdfMenuId").value;
+    const fileInput = container.querySelector("#menuPdfFile");
+    const file = fileInput.files[0];
+    if(!ym){ alert("対象月度を選択してください"); return; }
+    if(!menuId){ alert("メニューを選択してください"); return; }
+    if(!file){ alert("PDFファイルを選択してください"); return; }
+    if(file.type !== "application/pdf"){ alert("PDFファイルを選択してください"); return; }
+    withLoading(async ()=>{
+      try{
+        const base64 = await fileToBase64(file);
+        await sbRpc("rpc_admin_upsert_menu_pdf", {p_token: session.token, p_ym: ym, p_menu_id: menuId, p_filename: file.name, p_pdf_base64: base64});
+        state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
+        renderMenuAdmin(container);
+      }catch(e){ alert(friendlyError(e)); }
+    });
+  };
+
+  container.querySelectorAll("[data-view-pdf]").forEach(btn=>{
+    btn.onclick = ()=>{
+      withLoading(async ()=>{
+        try{
+          const rows = await sbRpc("rpc_get_menu_pdf", {p_token: session.token, p_ym: btn.dataset.viewPdf, p_menu_id: btn.dataset.viewPdfMenu});
+          if(!rows || !rows.length){ alert("この献立PDFは見つかりませんでした"); return; }
+          openPdfFromBase64(rows[0].pdf_data);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelectorAll("[data-del-pdf]").forEach(btn=>{
+    btn.onclick = ()=>{
+      if(!confirm(`${btn.dataset.delPdf} の献立PDFを削除しますか？`)) return;
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_delete_menu_pdf", {p_token: session.token, p_ym: btn.dataset.delPdf, p_menu_id: btn.dataset.delPdfMenu});
+          state.menuPdfList = await sbRpc("rpc_admin_list_menu_pdfs", {p_token: session.token});
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+
+  container.querySelector("#addBlockedDateBtn").onclick = ()=>{
+    const val = container.querySelector("#newBlockedDate").value;
+    const scope = container.querySelector("#blockedScope").value;
+    if(!val) return;
+    if(scope === "all"){
+      const newBlocked = Array.from(new Set([...(state.blockedDates||[]), val]));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    } else {
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_add_menu_blocked_dates", {p_token: session.token, p_menu_id: scope, p_dates: [val]});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    }
+  };
+
+  container.querySelector("#addBlockedRangeBtn").onclick = ()=>{
+    const startVal = container.querySelector("#rangeBlockedStart").value;
+    const endVal = container.querySelector("#rangeBlockedEnd").value;
+    const scope = container.querySelector("#blockedScope").value;
+    if(!startVal || !endVal){ alert("開始日と終了日の両方を選択してください"); return; }
+    if(startVal > endVal){ alert("終了日は開始日より後の日付にしてください"); return; }
+    const rangeDates = datesInRange(startVal, endVal);
+    if(scope === "all"){
+      const newBlocked = Array.from(new Set([...(state.blockedDates||[]), ...rangeDates]));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    } else {
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_add_menu_blocked_dates", {p_token: session.token, p_menu_id: scope, p_dates: rangeDates});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    }
+  };
+
+  container.querySelectorAll("[data-del-range-start]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const rangeDates = new Set(datesInRange(btn.dataset.delRangeStart, btn.dataset.delRangeEnd));
+      const newBlocked = (state.blockedDates||[]).filter(d=> !rangeDates.has(d));
+      withLoading(()=> saveSettingsPartial({ blockedDates: newBlocked }));
+    };
+  });
+
+  container.querySelectorAll("[data-del-menu-range-menu]").forEach(btn=>{
+    btn.onclick = ()=>{
+      const rangeDates = datesInRange(btn.dataset.delMenuRangeStart, btn.dataset.delMenuRangeEnd);
+      withLoading(async ()=>{
+        try{
+          await sbRpc("rpc_admin_remove_menu_blocked_dates", {p_token: session.token, p_menu_id: btn.dataset.delMenuRangeMenu, p_dates: rangeDates});
+          state.menuBlockedDatesAdmin = await sbRpc("rpc_admin_list_menu_blocked_dates", {p_token: session.token});
+          await loadMenuBlockedDates();
+          renderMenuAdmin(container);
+        }catch(e){ alert(friendlyError(e)); }
+      });
+    };
+  });
+}
+
+/* --- 締切設定 --- */
+const WEEKDAY_LABELS = ["日","月","火","水","木","金","土"];
+
+// 発注不可日の一覧表示用: 連続した日付をまとめて「開始日〜終了日」の範囲表示にする
+// （長期連休などを個別登録した場合に、1件ずつ表示すると見づらいため）
+function groupConsecutiveDates(sortedDates){
+  const groups = [];
+  let rangeStart = null, rangeEnd = null;
+  sortedDates.forEach(d=>{
+    if(rangeEnd && datesInRange(rangeEnd, d).length === 2){
+      rangeEnd = d;
+    } else {
+      if(rangeStart) groups.push([rangeStart, rangeEnd]);
+      rangeStart = d; rangeEnd = d;
+    }
+  });
+  if(rangeStart) groups.push([rangeStart, rangeEnd]);
+  return groups;
+}
+
+function renderDeadlineAdmin(container){
+  const blockedWd = state.blockedWeekdays||[];
+  container.innerHTML = `
+    <div class="card">
+      <h2>発注締切ルール</h2>
+      <label>対象日の何日前までに締め切るか</label>
+      <input type="number" id="dlDays" min="0" value="${state.deadline.daysBefore}">
+      <label>締切時刻</label>
+      <input type="time" id="dlTime" value="${state.deadline.time}">
+      <div class="hint">例: 「1日前 15:00」なら、8/5分の発注は8/4の15:00で締切</div>
+      <button class="primary" id="saveDlBtn">保存</button>
+    </div>
+    <div class="card">
+      <h2>発注不可の曜日</h2>
+      <div class="hint">チェックした曜日は毎週自動で発注不可（グレー表示）になります</div>
+      <div class="weekday-grid">
+        ${WEEKDAY_LABELS.map((label,idx)=>`
+          <label><input type="checkbox" class="wdCheckbox" data-wd="${idx}" ${blockedWd.includes(idx)?"checked":""}>${label}</label>
+        `).join("")}
+      </div>
+      <button class="primary" id="saveWdBtn">保存</button>
+    </div>
+    <div class="card no-print" style="border:2px solid #c0392b;">
+      <h2 style="color:#c0392b;">⚠ テスト運用: 発注データの一括削除</h2>
+      <div class="hint" style="color:#c0392b;">この操作を実行すると、これまでに登録された発注データ（全対象者・全日付分）が全件削除されます。<strong>元に戻すことはできません。</strong>本運用を開始する前のテストデータ削除にのみ使用してください。</div>
+      <label>削除パスワード</label>
+      <input type="password" id="deleteOrdersPassword" placeholder="パスワードを入力">
+      <button class="danger" id="deleteAllOrdersBtn" style="margin-top:10px;">発注データを一括削除する</button>
+    </div>
+  `;
+
+  container.querySelector("#saveDlBtn").onclick = ()=>{
+    const days = Number(container.querySelector("#dlDays").value)||0;
+    const time = container.querySelector("#dlTime").value || "15:00";
+    withLoading(()=> saveSettingsPartial({ daysBefore: days, time: time }));
+  };
+
+  container.querySelector("#saveWdBtn").onclick = ()=>{
+    const newWd = Array.from(container.querySelectorAll(".wdCheckbox:checked")).map(el=>Number(el.dataset.wd));
+    withLoading(()=> saveSettingsPartial({ blockedWeekdays: newWd }));
+  };
+
+  container.querySelector("#deleteAllOrdersBtn").onclick = ()=>{
+    const pwInput = container.querySelector("#deleteOrdersPassword");
+    const pw = pwInput.value;
+    if(pw !== "272348"){ alert("パスワードが正しくありません"); return; }
+    if(!confirm("本当にすべての発注データを削除しますか？この操作は取り消せません。")) return;
+    withLoading(async ()=>{
+      try{
+        const deletedCount = await sbRpc("rpc_admin_delete_all_orders", {p_token: session.token, p_password: pw});
+        state.orders = {}; // 発注画面のキャッシュもクリア
+        pwInput.value = "";
+        alert(`発注データを${deletedCount}件削除しました`);
+      }catch(e){ alert(friendlyError(e)); }
+    });
+  };
+}
+
+/* --- 発注集計・発注書 --- */
+let summaryDate = todayStr();
+let summaryRows = [];
+
+// FAX送付状に記載する送信元（自社）の固定情報
+const FAX_SENDER_INFO = {
+  company: "日清医療食品株式会社",
+  dept: "人事部労務課",
+  contact: "谷口",
+  tel: "03-3287-3618",
+  fax: "03-3287-3614"
+};
+
+// 指定日に発注があった全メニュー分のFAX送付状（A4縦・1メニュー1ページ）をまとめて印刷する。
+// 他の画面内容は印刷時に非表示にする。
+function printAllFaxSheets(dateStr, rowsForDate){
+  const menusWithOrders = (state.adminMenu||[]).filter(m=> rowsForDate.some(r=>r.menu_id===m.id));
+  if(!menusWithOrders.length){ alert("この日は発注がありません"); return; }
+  const html = menusWithOrders.map(menu=>{
+    const qty = rowsForDate.filter(r=>r.menu_id===menu.id).reduce((s,r)=> s + (r.qty||1), 0);
+    return `
+    <div class="fax-page">
+      <div class="fax-sheet">
+        <h1>FAX送付状</h1>
+        <div class="fax-menu-name">
+          <div class="fax-menu-line">${menu.name}　御中</div>
+          ${menu.faxNumber ? `<div class="fax-menu-line" style="font-size:16px;">FAX: ${menu.faxNumber}</div>` : ""}
+          <div class="fax-title-line">発注書</div>
+        </div>
+        <table class="fax-info-table">
+          <tr class="fax-emphasis-row"><th>会社名</th><td>${FAX_SENDER_INFO.company}</td></tr>
+          <tr><th>部署名</th><td>${FAX_SENDER_INFO.dept}</td></tr>
+          <tr><th>担当者</th><td>${FAX_SENDER_INFO.contact}</td></tr>
+          <tr><th>電話番号</th><td>${FAX_SENDER_INFO.tel}</td></tr>
+          <tr><th>FAX番号</th><td>${FAX_SENDER_INFO.fax}</td></tr>
+          <tr><th>注文日</th><td>${fmtDateJP(dateStr)}</td></tr>
+          ${menu.deadlineTimeShow && menu.deadlineTime ? `<tr><th>締切時間</th><td>${menu.deadlineTime}</td></tr>` : ""}
+          ${menu.courseNameShow && menu.courseName ? `<tr><th>コース名</th><td>${menu.courseName}</td></tr>` : ""}
+          ${menu.customerNumberShow && menu.customerNumber ? `<tr><th>お客様番号</th><td>${menu.customerNumber}</td></tr>` : ""}
+          <tr class="fax-emphasis-row"><th>注文数量</th><td>${qty} 個</td></tr>
+        </table>
+      </div>
+    </div>`;
+  }).join("");
+  let holder = document.getElementById("faxSheetHolder");
+  if(!holder){
+    holder = document.createElement("div");
+    holder.id = "faxSheetHolder";
+    document.body.appendChild(holder);
+  }
+  holder.innerHTML = html;
+  document.body.classList.add("printing-fax");
+  window.print();
+  const cleanup = ()=>{
+    document.body.classList.remove("printing-fax");
+    holder.innerHTML = "";
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+}
+
+function renderSummaryAdmin(container){
+  const rows = summaryRows;
+  const qtyByMenuType = {}; // { menuId: { employee: qty, executive: qty, dispatch: qty } }
+  rows.forEach(r=>{
+    if(!qtyByMenuType[r.menu_id]) qtyByMenuType[r.menu_id] = { employee:0, executive:0, dispatch:0 };
+    const t = qtyByMenuType[r.menu_id];
+    t[r.employee_type || "employee"] = (t[r.employee_type || "employee"]||0) + (r.qty||1);
+  });
+  const totalQtyByType = { employee:0, executive:0, dispatch:0 };
+  rows.forEach(r=>{ totalQtyByType[r.employee_type || "employee"] += (r.qty||1); });
+  const totalQty = rows.reduce((s,r)=> s + (r.qty||1), 0);
+  const totalAmount = rows.reduce((s,r)=> s + (r.amount||0), 0);
+  const hasMultiQty = rows.some(r=> (r.qty||1) >= 2);
+
+  container.innerHTML = `
+    <div class="card no-print">
+      <h2>集計対象日</h2>
+      <input type="date" id="summaryDateInput" value="${summaryDate}">
+      ${hasMultiQty ? `<div class="blink-alert">⚠ 複数個発注している方がいます</div>` : ""}
+    </div>
+    <div class="card" id="printArea">
+      <h2>発注集計（業者発注書）— ${fmtDateJP(summaryDate)}</h2>
+      <table>
+        <tr><th>メニュー</th><th>社員数量</th><th>役員数量</th><th>派遣数量</th><th>合計数量</th><th>小計</th></tr>
+        ${state.menu.map(m=>{
+          const t = qtyByMenuType[m.id] || { employee:0, executive:0, dispatch:0 };
+          const menuTotalQty = t.employee + t.executive + t.dispatch;
+          const subtotal = t.employee*(m.priceEmployee||0) + t.executive*(m.priceExecutive||0) + t.dispatch*(m.priceDispatch||0);
+          return `
+          <tr>
+            <td>${m.name}</td>
+            <td>${t.employee}</td>
+            <td>${t.executive}</td>
+            <td>${t.dispatch}</td>
+            <td>${menuTotalQty}</td>
+            <td>¥${subtotal.toLocaleString()}</td>
+          </tr>`;
+        }).join("")}
+        <tr class="total-row">
+          <td>合計</td>
+          <td>${totalQtyByType.employee}</td>
+          <td>${totalQtyByType.executive}</td>
+          <td>${totalQtyByType.dispatch}</td>
+          <td>${totalQty}</td>
+          <td>¥${totalAmount.toLocaleString()}</td>
+        </tr>
+      </table>
+      <h2 style="margin-top:20px;">発注者一覧</h2>
+      <table>
+        <tr><th>氏名</th><th>部署</th><th>メニュー</th><th>区分</th><th>数量</th><th>金額</th></tr>
+        ${rows.map(r=>`<tr><td>${r.name}</td><td>${r.dept}</td><td>${r.menu_name}</td><td>${employeeTypeLabel(r.employee_type)}</td><td>${r.qty||1}</td><td>¥${(r.amount||0).toLocaleString()}</td></tr>`).join("")}
+      </table>
+    </div>
+    <div class="card no-print">
+      <h2>FAX送付状</h2>
+      <div class="hint">「印刷」を押すと、この日に発注があったメニューごとに自動でページを分けて、FAX送付状（会社名・部署名・担当者・電話番号・FAX番号・注文日・注文数量を記載したA4縦1枚）を一括印刷します。発注先のFAX番号は業者名の下に自動で印字されます。締切時間・コース名・お客様番号は、メニュー管理画面で「FAXに反映」にチェックが入っているメニューのみ印字されます。</div>
+      <div class="row" style="margin-top:8px;">
+        <button class="primary" id="printFaxBtn" style="flex:0 0 auto;">印刷</button>
+      </div>
+    </div>
+    <div class="no-print" style="margin-top:10px;">
+      <button class="secondary" id="printSummaryBtn">業者発注書を印刷</button>
+      <button class="secondary" id="csvSummaryBtn">CSV出力</button>
+    </div>
+  `;
+  container.querySelector("#summaryDateInput").onchange = (e)=>{
+    summaryDate = e.target.value;
+    withLoading(async ()=>{ summaryRows = await sbRpc("rpc_admin_orders_for_date", {p_token: session.token, p_date: summaryDate}); });
+  };
+  container.querySelector("#printFaxBtn").onclick = ()=>{
+    printAllFaxSheets(summaryDate, rows);
+  };
+  container.querySelector("#printSummaryBtn").onclick = ()=> window.print();
+  container.querySelector("#csvSummaryBtn").onclick = ()=>{
+    let csv = "氏名,部署,メニュー,区分,数量,金額\n" + rows.map(r=>`${r.name},${r.dept},${r.menu_name},${employeeTypeLabel(r.employee_type)},${r.qty||1},${r.amount||0}`).join("\n");
+    downloadFile(`発注一覧_${summaryDate}.csv`, csv);
+  };
+}
+
+/* --- 受取確認リスト --- */
+let receiptDate = todayStr();
+let receiptRows = [];
+
+// 所属（部署）の組織コード昇順、同じ部署内は氏名順に並べ替えたフラットな配列を返す
+function sortReceiptRowsByDept(rows){
+  const groupMap = new Map();
+  rows.forEach(r=>{
+    const key = r.dept || "(所属未設定)";
+    if(!groupMap.has(key)) groupMap.set(key, { dept: key, orgCode: r.org_code || "", rows: [] });
+    const g = groupMap.get(key);
+    g.rows.push(r);
+    const rOrg = r.org_code || "";
+    if(rOrg && (!g.orgCode || rOrg.localeCompare(g.orgCode, "ja", {numeric:true}) < 0)) g.orgCode = rOrg;
+  });
+  const groups = [...groupMap.values()];
+  groups.sort((a,b)=> (a.orgCode||"").localeCompare(b.orgCode||"", "ja", {numeric:true}));
+  groups.forEach(g=> g.rows.sort((a,b)=> a.name.localeCompare(b.name,"ja")));
+  const flat = [];
+  groups.forEach(g=> g.rows.forEach(r=> flat.push(r)));
+  return flat;
+}
+
+// 対象日に発注があったメニューごとに1ページずつ、受取チェック欄・部署・氏名の順で一覧を作る
+function renderReceiptAdmin(container){
+  const menusWithOrders = state.menu.filter(m=> receiptRows.some(r=>r.menu_id===m.id));
+
+  const pagesHtml = menusWithOrders.map(m=>{
+    const rowsForMenu = sortReceiptRowsByDept(receiptRows.filter(r=>r.menu_id===m.id));
+    return `
+      <div class="receipt-page">
+        <h2>${m.name}　${fmtDateJP(receiptDate)}</h2>
+        <table class="receipt-table">
+          <tr><th class="checkbox-col">✓</th><th>部署</th><th>氏名</th></tr>
+          ${rowsForMenu.map(r=>`
+            <tr>
+              <td class="checkbox-col"><span class="checkbox-box"></span></td>
+              <td>${r.dept}</td>
+              <td>${r.name}${(r.qty && r.qty > 1) ? ` ×${r.qty}` : ""}</td>
+            </tr>`).join("")}
+        </table>
+      </div>`;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="card no-print">
+      <h2>対象日</h2>
+      <input type="date" id="receiptDateInput" value="${receiptDate}">
+      <div class="hint">「印刷」を押すと、この日に発注があったメニューごとに自動でページを分けて印刷します（1メニュー1ページ、1ページに約50名分を想定した行幅です）。</div>
+    </div>
+    <div class="card" id="printArea">
+      ${menusWithOrders.length ? pagesHtml : `<div class="hint">この日は発注がありません</div>`}
+    </div>
+    <div class="no-print" style="margin-top:10px;">
+      <button class="secondary" id="printReceiptBtn">印刷</button>
+    </div>
+  `;
+  container.querySelector("#receiptDateInput").onchange = (e)=>{
+    receiptDate = e.target.value;
+    withLoading(async ()=>{ receiptRows = await sbRpc("rpc_admin_orders_for_date", {p_token: session.token, p_date: receiptDate}); });
+  };
+  container.querySelector("#printReceiptBtn").onclick = ()=> window.print();
+}
+
+/* --- 月次集計（21日〜20日の発注月度でExcel出力。日付ごとの発注金額・数量が分かる明細形式＋部署別・メニュー別集計） --- */
+let monthlyYm = periodLabelFor(todayStr());
+let monthlyGroups = []; // 集計後: [{code, name, total, byDate: {date: amount}}]
+let monthlyMenuTotals = []; // 集計後: [{menuName, totalQty, totalAmount}]
+let monthlyMenuBreakdown = []; // 集計後: [{menuId, menuName, totalQty, totalAmount, employees: [{code,name,totalQty,totalAmount}]}]
+
+// 日付を「M/D」形式の短い表示にする（列見出し用）
+function fmtDateShort(dateStr){
+  const [, mo, da] = dateStr.split("-").map(Number);
+  return `${mo}/${da}`;
+}
+
+// 期間内の生の発注データ（社員別・個人単価反映済みのamountを含む）を社員ごとにグループ化し、
+// 日付ごとの金額を横持ち（列）で参照できる形にする（A:社員CD B:氏名 C:月間数量 D:月間発注金額 E列以降:日付別金額）
+function aggregateOrdersByEmployeeDate(rawRows){
+  const map = new Map();
+  rawRows.forEach(r=>{
+    if(!map.has(r.employee_id)) map.set(r.employee_id, { code: r.code, name: r.name, dept: r.dept||"", aggDept: r.agg_dept||"", total: 0, totalQty: 0, byDate: {}, byMenu: {} });
+    const g = map.get(r.employee_id);
+    g.byDate[r.date] = (g.byDate[r.date] || 0) + (r.amount || 0);
+    g.byMenu[r.menu_id] = (g.byMenu[r.menu_id] || 0) + (r.qty || 1);
+    g.total += (r.amount || 0);
+    g.totalQty += (r.qty || 1);
+  });
+  const groups = [...map.values()];
+  groups.sort((a,b)=> (a.code||"").localeCompare(b.code||"", "ja", {numeric:true}));
+  return groups;
+}
+
+// 社員別集計を「集計用部署名」ごとにまとめ、グループ単位の月間合計数量・合計金額（メニュー別数量を含む）を算出する
+// （集計用部署名が未設定の対象者は部署別集計には含めない）
+function aggregateDeptTotals(groups){
+  const map = new Map();
+  groups.filter(g=> g.aggDept).forEach(g=>{
+    const key = g.aggDept;
+    if(!map.has(key)) map.set(key, { dept: key, totalQty: 0, totalAmount: 0, byMenu: {} });
+    const d = map.get(key);
+    d.totalQty += g.totalQty;
+    d.totalAmount += g.total;
+    Object.keys(g.byMenu||{}).forEach(menuId=>{
+      d.byMenu[menuId] = (d.byMenu[menuId] || 0) + g.byMenu[menuId];
+    });
+  });
+  return [...map.values()].sort((a,b)=> a.dept.localeCompare(b.dept, "ja"));
+}
+
+// 期間内の生の発注データをメニューごとにまとめ、メニュー単位の月間合計数量・合計金額を算出する
+function aggregateMenuTotals(rawRows){
+  const map = new Map();
+  rawRows.forEach(r=>{
+    const key = r.menu_id;
+    if(!map.has(key)) map.set(key, { menuName: r.menu_name||"", totalQty: 0, totalAmount: 0 });
+    const g = map.get(key);
+    g.totalQty += (r.qty || 1);
+    g.totalAmount += (r.amount || 0);
+  });
+  return [...map.values()].sort((a,b)=> a.menuName.localeCompare(b.menuName, "ja"));
+}
+
+// 期間内の生の発注データを「メニュー→社員」の2段階でまとめ、メニューごとにシートを分けて出力するための detail データを作る
+// [{menuId, menuName, totalQty, totalAmount, employees:[{code,name,totalQty,totalAmount}]}]
+function aggregateMenuEmployeeBreakdown(rawRows){
+  const menuMap = new Map();
+  rawRows.forEach(r=>{
+    if(!menuMap.has(r.menu_id)){
+      menuMap.set(r.menu_id, { menuId: r.menu_id, menuName: r.menu_name||"", empMap: new Map(), totalQty: 0, totalAmount: 0 });
+    }
+    const menuEntry = menuMap.get(r.menu_id);
+    if(!menuEntry.empMap.has(r.employee_id)){
+      menuEntry.empMap.set(r.employee_id, { code: r.code, name: r.name, aggDept: r.agg_dept||"", totalQty: 0, totalAmount: 0 });
+    }
+    const empEntry = menuEntry.empMap.get(r.employee_id);
+    empEntry.totalQty += (r.qty || 1);
+    empEntry.totalAmount += (r.amount || 0);
+    menuEntry.totalQty += (r.qty || 1);
+    menuEntry.totalAmount += (r.amount || 0);
+  });
+  const menus = [...menuMap.values()].map(m=>({
+    menuId: m.menuId,
+    menuName: m.menuName,
+    totalQty: m.totalQty,
+    totalAmount: m.totalAmount,
+    employees: [...m.empMap.values()].sort((a,b)=> (a.code||"").localeCompare(b.code||"", "ja", {numeric:true}))
+  }));
+  menus.sort((a,b)=> a.menuName.localeCompare(b.menuName, "ja"));
+  return menus;
+}
+
+// あるメニューを発注した対象者一覧（各要素に aggDept, totalQty, totalAmount を持つ）を
+// 「集計用部署名」でまとめ、そのメニュー内での部署別月間合計数量・金額を算出する
+// （集計用部署名が未設定の対象者は部署別集計には含めない。全体の部署別集計と同じルール）
+function aggregateMenuDeptTotals(employees){
+  const map = new Map();
+  employees.filter(e=> e.aggDept).forEach(e=>{
+    const key = e.aggDept;
+    if(!map.has(key)) map.set(key, { dept: key, totalQty: 0, totalAmount: 0 });
+    const d = map.get(key);
+    d.totalQty += e.totalQty;
+    d.totalAmount += e.totalAmount;
+  });
+  return [...map.values()].sort((a,b)=> a.dept.localeCompare(b.dept, "ja"));
+}
+
+function renderMonthlyAdmin(container){
+  const {start, end} = periodRange(monthlyYm);
+  const [, m] = monthlyYm.split("-");
+  const grandTotal = monthlyGroups.reduce((s,g)=> s + g.total, 0);
+  const grandTotalQty = monthlyGroups.reduce((s,g)=> s + g.totalQty, 0);
+  const deptTotals = aggregateDeptTotals(monthlyGroups);
+
+  container.innerHTML = `
+    <div class="card no-print">
+      <h2>集計する月度</h2>
+      <input type="month" id="monthlyYmInput" value="${monthlyYm}">
+      <div class="hint">${Number(m)}月度 ＝ ${fmtDateJP(start)}〜${fmtDateJP(end)}（21日始まり20日締め）</div>
+      <button class="primary" id="monthlyRunBtn">集計する</button>
+    </div>
+    <div class="card">
+      <h2>${Number(m)}月度 発注金額集計（${fmtDateJP(start)}〜${fmtDateJP(end)}）</h2>
+      <div class="hint">社員CD・氏名・月間数量・月間発注金額に続けて、メニューごとの月間発注数量を表示します。Excel出力・CSV出力も同じ形式で、対象者の「集計用部署名」ごと、メニューごとの月間合計数量・金額も併せて出力します（集計用部署名は対象者リストで設定してください。未設定の対象者は部署別集計に含まれません）。Excel出力では、メニューごとに発注者一覧（個人別）と集計用部署名別の集計をまとめた別シートを追加します。</div>
+      <div class="table-scroll">
+      <table class="monthly-table">
+        <tr>
+          <th>社員CD</th><th>氏名</th><th>月間数量</th><th>月間発注金額</th>
+          ${state.menu.map(mn=>`<th>${mn.name}</th>`).join("")}
+        </tr>
+        ${monthlyGroups.length ? monthlyGroups.map(g=>`
+          <tr>
+            <td>${g.code||""}</td>
+            <td>${g.name}</td>
+            <td>${g.totalQty}</td>
+            <td>¥${g.total.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${(g.byMenu && g.byMenu[mn.id]) || 0}</td>`).join("")}
+          </tr>
+        `).join("") : `<tr><td colspan="${4+state.menu.length}" class="hint">「集計する」を押してください</td></tr>`}
+        ${monthlyGroups.length ? `
+          <tr class="total-row">
+            <td colspan="2">合計</td>
+            <td>${grandTotalQty}</td>
+            <td>¥${grandTotal.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id]) || 0), 0)}</td>`).join("")}
+          </tr>` : ""}
+      </table>
+      </div>
+      ${monthlyGroups.length ? `
+      <h2 style="margin-top:30px;">集計用部署名別 月間合計数量・金額</h2>
+      <table class="monthly-table">
+        <tr><th>集計用部署名</th><th>月間合計数量</th><th>月間合計金額</th>${state.menu.map(mn=>`<th>${mn.name}</th>`).join("")}</tr>
+        ${deptTotals.map(d=>`
+          <tr>
+            <td>${d.dept}</td>
+            <td>${d.totalQty}</td>
+            <td>¥${d.totalAmount.toLocaleString()}</td>
+            ${state.menu.map(mn=>`<td>${(d.byMenu && d.byMenu[mn.id]) || 0}</td>`).join("")}
+          </tr>
+        `).join("")}
+        <tr class="total-row">
+          <td>合計</td>
+          <td>${grandTotalQty}</td>
+          <td>¥${grandTotal.toLocaleString()}</td>
+          ${state.menu.map(mn=>`<td>${deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id]) || 0), 0)}</td>`).join("")}
+        </tr>
+      </table>` : ""}
+      ${monthlyGroups.length ? `
+      <h2 style="margin-top:30px;">メニュー別 月間合計数量・金額</h2>
+      <table class="monthly-table">
+        <tr><th>メニュー</th><th>月間合計数量</th><th>月間合計金額</th></tr>
+        ${monthlyMenuTotals.map(mt=>`
+          <tr>
+            <td>${mt.menuName}</td>
+            <td>${mt.totalQty}</td>
+            <td>¥${mt.totalAmount.toLocaleString()}</td>
+          </tr>
+        `).join("")}
+        <tr class="total-row">
+          <td>合計</td>
+          <td>${grandTotalQty}</td>
+          <td>¥${grandTotal.toLocaleString()}</td>
+        </tr>
+      </table>` : ""}
+    </div>
+    <div class="no-print" style="margin-top:10px;">
+      <button class="secondary" id="excelMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>Excel出力</button>
+      <button class="secondary" id="csvMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>CSV出力</button>
+    </div>
+  `;
+  container.querySelector("#monthlyYmInput").onchange = (e)=>{
+    if(e.target.value) monthlyYm = e.target.value;
+    monthlyGroups = [];
+    monthlyMenuTotals = [];
+    monthlyMenuBreakdown = [];
+    renderMonthlyAdmin(container);
+  };
+  container.querySelector("#monthlyRunBtn").onclick = ()=>{
+    withLoading(async ()=>{
+      const range = periodRange(monthlyYm);
+      const raw = await sbRpc("rpc_admin_orders_in_range", {p_token: session.token, p_start_date: range.start, p_end_date: range.end});
+      monthlyGroups = aggregateOrdersByEmployeeDate(raw);
+      monthlyMenuTotals = aggregateMenuTotals(raw);
+      monthlyMenuBreakdown = aggregateMenuEmployeeBreakdown(raw);
+    });
+  };
+  container.querySelector("#excelMonthlyBtn").onclick = async ()=>{
+    if(!monthlyGroups.length) return;
+    try{
+      if(typeof ExcelJS === "undefined"){
+        throw new Error("Excel出力に必要な部品の読み込みに失敗しました。社内ネットワークの制限などでインターネット上の部品（cdnjs.cloudflare.com）に接続できていない可能性があります。下の「CSV出力」を代わりにお使いください。");
+      }
+      await exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuBreakdown: monthlyMenuBreakdown, menuList: state.menu, grandTotal, grandTotalQty });
+    }catch(err){
+      alert("Excel出力でエラーが発生しました: " + (err && err.message ? err.message : err));
+    }
+  };
+  container.querySelector("#csvMonthlyBtn").onclick = ()=>{
+    if(!monthlyGroups.length) return;
+    exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuList: state.menu, grandTotal, grandTotalQty });
+  };
+}
+
+// Excel出力が使えない環境向けの予備出力（外部ライブラリ不要のCSV）。内容はExcel出力と同じ。
+function exportMonthlyCsv({ monthlyYm, monthlyGroups, deptTotals, menuTotals, menuList, grandTotal, grandTotalQty }){
+  const menus = menuList||[];
+  const lines = [];
+  lines.push(["社員CD","氏名","月間数量","月間発注金額", ...menus.map(mn=>mn.name)].join(","));
+  monthlyGroups.forEach(g=>{
+    lines.push([g.code||"", g.name, g.totalQty, g.total, ...menus.map(mn=> (g.byMenu && g.byMenu[mn.id]) || 0)].join(","));
+  });
+  lines.push(["合計","", grandTotalQty, grandTotal, ...menus.map(mn=> monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id])||0), 0))].join(","));
+  lines.push("");
+  lines.push("");
+  lines.push("集計用部署名別 月間合計数量・金額");
+  lines.push(["集計用部署名","月間合計数量","月間合計金額", ...menus.map(mn=>mn.name)].join(","));
+  deptTotals.forEach(d=>{
+    lines.push([d.dept, d.totalQty, d.totalAmount, ...menus.map(mn=> (d.byMenu && d.byMenu[mn.id]) || 0)].join(","));
+  });
+  lines.push(["合計", grandTotalQty, grandTotal, ...menus.map(mn=> deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id])||0), 0))].join(","));
+  lines.push("");
+  lines.push("");
+  lines.push("メニュー別 月間合計数量・金額");
+  lines.push(["メニュー","月間合計数量","月間合計金額"].join(","));
+  (menuTotals||[]).forEach(mt=>{
+    lines.push([mt.menuName, mt.totalQty, mt.totalAmount].join(","));
+  });
+  lines.push(["合計", grandTotalQty, grandTotal].join(","));
+  downloadFile(`月次発注金額集計_${monthlyYm}.csv`, lines.join("\n"));
+}
+
+// 月次集計をA4縦向き・表形式のExcelファイル(.xlsx)として出力する
+// （メイン集計シート: 社員別内訳を左右2列に分けて表示し、その下に部署別・メニュー別集計をまとめる。
+//   さらにメニューごとに、そのメニューを発注した対象者一覧をまとめた専用シートを追加する）
+async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals, menuBreakdown, menuList, grandTotal, grandTotalQty }){
+  const menus = menuList||[];
+  const wb = new ExcelJS.Workbook();
+
+  // 日本語がどの環境でも文字化け・表示崩れなく表示されるよう、全セル共通のフォントを明示的に指定する
+  const JP_FONT = "游ゴシック";
+  const styleHeaderRow = (row, skipCols)=>{
+    row.eachCell((cell, colNumber)=>{
+      if(skipCols && skipCols.has(colNumber)) return;
+      cell.font = { name: JP_FONT, size: 11, bold:true };
+      cell.alignment = { horizontal:"center", vertical:"middle" };
+      cell.fill = { type:"pattern", pattern:"solid", fgColor:{argb:"FFEFEFEF"} };
+      cell.border = { top:{style:"thin"}, left:{style:"thin"}, bottom:{style:"thin"}, right:{style:"thin"} };
+    });
+  };
+  const styleDataRow = (row, boldTotal, skipCols)=>{
+    row.eachCell((cell, colNumber)=>{
+      if(skipCols && skipCols.has(colNumber)) return;
+      cell.font = { name: JP_FONT, size: 11, bold: !!boldTotal };
+      cell.alignment = { vertical:"middle" };
+      cell.border = { top:{style:"thin"}, left:{style:"thin"}, bottom:{style:"thin"}, right:{style:"thin"} };
+    });
+  };
+
+  // 列幅は固定値ではなく、実際に入っている文字（全角・半角）の見た目の幅から自動計算する。
+  // これにより、氏名・集計用部署名・メニュー名が長い場合や、金額の桁数が多い場合でも
+  // 文字が「###」表示になったり、枠内で見切れたりしないようにする。
+  function displayWidth(str){
+    let w = 0;
+    for(const ch of String(str)){
+      w += /[　-鿿＀-￯]/.test(ch) ? 2 : 1; // 全角相当は2、半角は1として計算
+    }
+    return w;
+  }
+  function autoFitColumns(sheet, excludeRowNumbers){
+    const excludeSet = excludeRowNumbers || new Set();
+    const colWidths = {};
+    sheet.eachRow(row=>{
+      if(excludeSet.has(row.number)) return; // 結合された見出し行は列幅計算から除外
+      row.eachCell({ includeEmpty:false }, (cell, colNumber)=>{
+        const v = cell.value;
+        if(v == null || v === "") return;
+        let display;
+        if(typeof v === "number" && cell.numFmt && cell.numFmt.indexOf("¥") !== -1){
+          display = "¥" + v.toLocaleString();
+        } else {
+          display = String(v);
+        }
+        const w = displayWidth(display);
+        if(!colWidths[colNumber] || w > colWidths[colNumber]) colWidths[colNumber] = w;
+      });
+    });
+    Object.keys(colWidths).forEach(colNumber=>{
+      sheet.getColumn(Number(colNumber)).width = Math.min(Math.max(colWidths[colNumber] + 4, 10), 40);
+    });
+  }
+
+  // Excelのシート名は最大31文字・使用不可文字（\/?*[]:）ありのため、メニュー名から安全なシート名を作る
+  const usedSheetNames = new Set();
+  function safeSheetName(name){
+    let s = String(name || "メニュー").replace(/[\\\/\?\*\[\]:]/g, "");
+    if(!s) s = "メニュー";
+    if(s.length > 31) s = s.slice(0, 31);
+    let finalName = s;
+    let counter = 2;
+    while(usedSheetNames.has(finalName)){
+      const suffix = `(${counter})`;
+      finalName = s.slice(0, Math.max(1, 31 - suffix.length)) + suffix;
+      counter++;
+    }
+    usedSheetNames.add(finalName);
+    return finalName;
+  }
+
+  const ws = wb.addWorksheet(safeSheetName("月次集計"), {
+    pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: {left:0.5,right:0.5,top:0.5,bottom:0.5,header:0.2,footer:0.2} }
+  });
+
+  // 社員別内訳を左右2列に分けて表示する（各列: 社員CD,氏名,月間数量,月間発注金額,メニュー別数量…／間に空白列）
+  const blockWidth = 4 + menus.length; // 1ブロックの列数
+  const gapCol = blockWidth + 1;
+  const rightStart = gapCol + 1;
+  const leftAmountCol = 4;
+  const rightAmountCol = rightStart + 3;
+
+  const half = Math.ceil(monthlyGroups.length / 2);
+  const leftGroups = monthlyGroups.slice(0, half);
+  const rightGroups = monthlyGroups.slice(half);
+
+  const menuNameCells = menus.map(mn=>mn.name);
+  const h1 = ws.addRow(["社員CD","氏名","月間数量","月間発注金額", ...menuNameCells, "", "社員CD","氏名","月間数量","月間発注金額", ...menuNameCells]);
+  styleHeaderRow(h1, new Set([gapCol]));
+
+  const empRowCount = Math.max(leftGroups.length, rightGroups.length);
+  for(let i=0;i<empRowCount;i++){
+    const l = leftGroups[i];
+    const r = rightGroups[i];
+    const leftMenuQtys = menus.map(mn=> l ? ((l.byMenu && l.byMenu[mn.id]) || 0) : "");
+    const rightMenuQtys = menus.map(mn=> r ? ((r.byMenu && r.byMenu[mn.id]) || 0) : "");
+    const row = ws.addRow([
+      l ? (l.code||"") : "", l ? l.name : "", l ? l.totalQty : "", l ? l.total : "", ...leftMenuQtys,
+      "",
+      r ? (r.code||"") : "", r ? r.name : "", r ? r.totalQty : "", r ? r.total : "", ...rightMenuQtys
+    ]);
+    styleDataRow(row, false, new Set([gapCol]));
+    row.getCell(leftAmountCol).numFmt = "¥#,##0";
+    row.getCell(rightAmountCol).numFmt = "¥#,##0";
+  }
+
+  const totalRowValues = ["合計","", grandTotalQty, grandTotal, ...menus.map(mn=> monthlyGroups.reduce((s,g)=> s + ((g.byMenu && g.byMenu[mn.id])||0), 0))];
+  const totalRow = ws.addRow(totalRowValues);
+  ws.mergeCells(totalRow.number, 1, totalRow.number, 2);
+  styleDataRow(totalRow, true);
+  totalRow.getCell(leftAmountCol).numFmt = "¥#,##0";
+
+  // 3行あける
+  ws.addRow([]); ws.addRow([]); ws.addRow([]);
+
+  const deptTitleRow = ws.addRow(["集計用部署名別 月間合計数量・金額"]);
+  ws.mergeCells(deptTitleRow.number, 1, deptTitleRow.number, 3 + menus.length);
+  deptTitleRow.font = { name: JP_FONT, bold:true, size:13 };
+
+  const deptHeaderRow = ws.addRow(["集計用部署名","月間合計数量","月間合計金額", ...menuNameCells]);
+  styleHeaderRow(deptHeaderRow);
+
+  deptTotals.forEach(d=>{
+    const row = ws.addRow([d.dept, d.totalQty, d.totalAmount, ...menus.map(mn=> (d.byMenu && d.byMenu[mn.id]) || 0)]);
+    styleDataRow(row, false);
+    row.getCell(3).numFmt = "¥#,##0";
+  });
+  const deptTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal, ...menus.map(mn=> deptTotals.reduce((s,d)=> s + ((d.byMenu && d.byMenu[mn.id])||0), 0))]);
+  styleDataRow(deptTotalRow, true);
+  deptTotalRow.getCell(3).numFmt = "¥#,##0";
+
+  // 3行あける
+  ws.addRow([]); ws.addRow([]); ws.addRow([]);
+
+  const menuTitleRow = ws.addRow(["メニュー別 月間合計数量・金額"]);
+  ws.mergeCells(menuTitleRow.number, 1, menuTitleRow.number, 3);
+  menuTitleRow.font = { name: JP_FONT, bold:true, size:13 };
+
+  const menuHeaderRow = ws.addRow(["メニュー","月間合計数量","月間合計金額"]);
+  styleHeaderRow(menuHeaderRow);
+
+  (menuTotals||[]).forEach(mt=>{
+    const row = ws.addRow([mt.menuName, mt.totalQty, mt.totalAmount]);
+    styleDataRow(row, false);
+    row.getCell(3).numFmt = "¥#,##0";
+  });
+  const menuTotalRow = ws.addRow(["合計", grandTotalQty, grandTotal]);
+  styleDataRow(menuTotalRow, true);
+  menuTotalRow.getCell(3).numFmt = "¥#,##0";
+
+  const titleRowNumbers = new Set([deptTitleRow.number, menuTitleRow.number]);
+  autoFitColumns(ws, titleRowNumbers);
+  // 間の空白列は社員別内訳の左右2列を区切るための列（常に狭い固定幅にする）
+  ws.getColumn(gapCol).width = 3;
+
+  // メニューごとに、そのメニューを発注した対象者一覧（個人別）＋集計用部署名別の集計をまとめたシートを追加する
+  (menuBreakdown||[]).forEach(menu=>{
+    const mws = wb.addWorksheet(safeSheetName(menu.menuName), {
+      pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: {left:0.5,right:0.5,top:0.5,bottom:0.5,header:0.2,footer:0.2} }
+    });
+    const titleRow = mws.addRow([`${menu.menuName}　発注者一覧（${monthlyYm}）`]);
+    mws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+    titleRow.font = { name: JP_FONT, bold:true, size:13 };
+
+    const mHeaderRow = mws.addRow(["社員CD","氏名","数量","金額"]);
+    styleHeaderRow(mHeaderRow);
+
+    menu.employees.forEach(emp=>{
+      const row = mws.addRow([emp.code||"", emp.name, emp.totalQty, emp.totalAmount]);
+      styleDataRow(row, false);
+      row.getCell(4).numFmt = "¥#,##0";
+    });
+    const mTotalRow = mws.addRow(["合計","", menu.totalQty, menu.totalAmount]);
+    mws.mergeCells(mTotalRow.number, 1, mTotalRow.number, 2);
+    styleDataRow(mTotalRow, true);
+    mTotalRow.getCell(4).numFmt = "¥#,##0";
+
+    // 3行あける
+    mws.addRow([]); mws.addRow([]); mws.addRow([]);
+
+    const menuDeptTotals = aggregateMenuDeptTotals(menu.employees);
+    const mDeptTitleRow = mws.addRow(["集計用部署名別 集計"]);
+    mws.mergeCells(mDeptTitleRow.number, 1, mDeptTitleRow.number, 3);
+    mDeptTitleRow.font = { name: JP_FONT, bold:true, size:13 };
+
+    const mDeptHeaderRow = mws.addRow(["集計用部署名","数量","金額"]);
+    styleHeaderRow(mDeptHeaderRow);
+
+    menuDeptTotals.forEach(d=>{
+      const row = mws.addRow([d.dept, d.totalQty, d.totalAmount]);
+      styleDataRow(row, false);
+      row.getCell(3).numFmt = "¥#,##0";
+    });
+    const mDeptTotalRow = mws.addRow(["合計", menu.totalQty, menu.totalAmount]);
+    styleDataRow(mDeptTotalRow, true);
+    mDeptTotalRow.getCell(3).numFmt = "¥#,##0";
+
+    autoFitColumns(mws, new Set([titleRow.number, mDeptTitleRow.number]));
+  });
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  downloadBlob(`月次発注金額集計_${monthlyYm}.xlsx`, blob);
+}
+
+/* --- 代理発注（管理者権限：社員になりかわって発注登録・修正。締切後でも修正可能） --- */
+let proxyEmployeeId = "";
+let proxyYm = periodLabelFor(todayStr());
+let proxyMessage = "";
+let proxySearchTerm = "";
+
+// 社員CD・氏名・部署・集計用部署名のいずれかに検索語を含む対象者かどうかを判定する
+function employeeMatchesSearch(emp, term){
+  if(!term) return true;
+  const t = term.toLowerCase();
+  return (emp.code||"").toLowerCase().includes(t)
+    || (emp.name||"").toLowerCase().includes(t)
+    || (emp.dept||"").toLowerCase().includes(t)
+    || (emp.aggDept||"").toLowerCase().includes(t);
+}
+
+function renderProxyAdmin(container){
+  const employees = [...state.employees].sort((a,b)=> (a.code||"").localeCompare(b.code||"", "ja", {numeric:true}));
+  if(!proxyEmployeeId && employees.length) proxyEmployeeId = employees[0].id;
+  const targetEmp = employees.find(e=>e.id===proxyEmployeeId);
+  // 検索語に一致する対象者のみ選択肢に表示する（現在選択中の対象者は、一致しなくても選択が外れないよう常に含める）
+  const visibleEmployees = employees.filter(e=> employeeMatchesSearch(e, proxySearchTerm) || e.id === proxyEmployeeId);
+
+  const dates = datesInPeriod(proxyYm);
+  const {start: periodStart, end: periodEnd} = periodRange(proxyYm);
+  const [ymYear, ymMonth] = proxyYm.split("-");
+
+  function priceForTarget(m){
+    if(!targetEmp) return m.priceEmployee||0;
+    if(targetEmp.employeeType === "executive") return m.priceExecutive||0;
+    if(targetEmp.employeeType === "dispatch") return m.priceDispatch||0;
+    return m.priceEmployee||0;
+  }
+
+  container.innerHTML = `
+    <div class="card">
+      <h2>代理発注・修正（管理者用）</h2>
+      <div class="hint">管理者が対象者になりかわって発注内容を登録・修正できます。<strong>締切後でも修正可能です</strong>（土日・祝日・発注不可日は対象外のままです）。</div>
+      <label>対象者を検索（社員CD・氏名・部署・集計用部署名）</label>
+      <input type="text" id="proxyEmpSearch" placeholder="例: 221323、神林、総務課" value="${proxySearchTerm}">
+      <label style="margin-top:8px;">対象者<span id="proxyEmpCountLabel">${proxySearchTerm ? `（${visibleEmployees.length}件ヒット）` : ""}</span></label>
+      <select id="proxyEmpSelect">
+        ${visibleEmployees.length ? visibleEmployees.map(e=>`<option value="${e.id}" ${e.id===proxyEmployeeId?"selected":""}>${e.code||""} ${e.name}${e.dept?`（${e.dept}）`:""}</option>`).join("") : `<option value="">該当する対象者がいません</option>`}
+      </select>
+    </div>
+    <div class="card no-print">
+      <h2>対象月度</h2>
+      <div class="row" style="align-items:center;">
+        <button class="secondary" id="proxyPrevBtn" style="flex:0 0 auto;">← 前月度</button>
+        <input type="month" id="proxyMonthSelect" value="${proxyYm}">
+        <button class="secondary" id="proxyNextBtn" style="flex:0 0 auto;">次月度 →</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>${ymYear}年${Number(ymMonth)}月度（${fmtDateJP(periodStart)}〜${fmtDateJP(periodEnd)}）${targetEmp ? ` — ${targetEmp.name}` : ""}</h2>
+      <div class="table-scroll">
+      <table>
+        <tr>
+          <th>日付</th><th>状態</th>
+          ${state.menu.map(m=>`<th>${m.name}<br><span class="hint" style="margin:0;">¥${priceForTarget(m)}</span></th>`).join("")}
+          <th>数量</th>
+        </tr>
+        ${dates.map(d=>{
+          const holiday = holidayName(d);
+          const blockedDate = isBlockedDate(d);
+          const blockedWd = isBlockedWeekday(d);
+          const nonOrderable = blockedDate || blockedWd || !!holiday;
+          const existing = proxyEmployeeId ? existingMenuFor(proxyEmployeeId, d) : null;
+          const existingQty = proxyEmployeeId ? existingQtyFor(proxyEmployeeId, d) : 1;
+          const existingMenuName = existing ? (state.menu.find(m=>m.id===existing)?.name || "―") : null;
+          const existingLabel = existingMenuName ? (existingQty > 1 ? `${existingMenuName} ×${existingQty}` : existingMenuName) : null;
+          const isToday = d === todayStr();
+          const todayCls = isToday ? " row-today" : "";
+          const todayMark = isToday ? ` <span class="today-badge">本日</span>` : "";
+          if(nonOrderable){
+            const label = holiday ? holiday : (blockedWd ? `${WEEKDAY_LABELS[dayOfWeek(d)]}曜休配` : "発注不可日");
+            return `<tr class="row-holiday${todayCls}">
+              <td>${fmtDateJP(d)}${todayMark}</td>
+              <td><span style="color:var(--sub);">休（${label}）</span></td>
+              <td colspan="${state.menu.length+1}">${existingLabel ? existingLabel : "発注不可"}</td>
+            </tr>`;
+          }
+          const lockedNote = isLocked(d) ? ` <span class="hint" style="margin:0;color:var(--lock);">(通常締切後)</span>` : "";
+          return `<tr class="${todayCls.trim()}">
+            <td>${fmtDateJP(d)}${todayMark}</td>
+            <td><span style="color:var(--ok);">修正可</span>${lockedNote}</td>
+            ${state.menu.map(m=>{
+              const menuBlocked = isMenuBlockedDate(m.id, d) && existing!==m.id;
+              return `
+              <td class="checkbox-col" style="width:auto;text-align:center;">
+                ${menuBlocked
+                  ? `<span class="hint" style="margin:0;">休止</span>`
+                  : `<input type="checkbox" class="proxyCheckbox" data-date="${d}" data-menu="${m.id}" ${existing===m.id?"checked":""}>`}
+              </td>`;
+            }).join("")}
+            <td class="checkbox-col" style="width:56px;">
+              <input type="number" class="proxyQtyInput" data-date="${d}" min="1" value="${existing ? existingQty : ""}" style="width:52px;padding:4px;">
+            </td>
+          </tr>`;
+        }).join("")}
+      </table>
+      </div>
+      <div class="hint">「(通常締切後)」と表示されている日付も、この画面からは登録・修正・取消ができます。</div>
+      <button class="primary" id="proxyUpdateBtn">まとめて更新する</button>
+      ${proxyMessage ? `<div class="status-box status-ok">${proxyMessage}</div>` : ""}
+    </div>
+  `;
+
+  // 検索欄の入力ではコンテナ全体を再描画しない（日本語入力（IME）変換中に要素が作り直されると、
+  // 「ささき」が「ｓあｓあｋい」のように文字化けする不具合が起きるため）。
+  // 代わりにプルダウンの選択肢と件数表示だけをその場で更新する。
+  container.querySelector("#proxyEmpSearch").oninput = (e)=>{
+    proxySearchTerm = e.target.value;
+    const filtered = employees.filter(emp=> employeeMatchesSearch(emp, proxySearchTerm) || emp.id === proxyEmployeeId);
+    const select = container.querySelector("#proxyEmpSelect");
+    select.innerHTML = filtered.length
+      ? filtered.map(emp=>`<option value="${emp.id}" ${emp.id===proxyEmployeeId?"selected":""}>${emp.code||""} ${emp.name}${emp.dept?`（${emp.dept}）`:""}</option>`).join("")
+      : `<option value="">該当する対象者がいません</option>`;
+    container.querySelector("#proxyEmpCountLabel").textContent = proxySearchTerm ? `（${filtered.length}件ヒット）` : "";
+  };
+  container.querySelector("#proxyEmpSelect").onchange = (e)=>{
+    if(!e.target.value) return;
+    proxyEmployeeId = e.target.value;
+    proxyMessage = "";
+    withLoading(()=> loadProxyOrdersForPeriod(proxyEmployeeId, proxyYm));
+  };
+  container.querySelector("#proxyMonthSelect").onchange = (e)=>{
+    if(e.target.value) proxyYm = e.target.value;
+    proxyMessage = "";
+    withLoading(()=> loadProxyOrdersForPeriod(proxyEmployeeId, proxyYm));
+  };
+  container.querySelector("#proxyPrevBtn").onclick = ()=>{
+    proxyYm = shiftMonth(proxyYm, -1);
+    proxyMessage = "";
+    withLoading(()=> loadProxyOrdersForPeriod(proxyEmployeeId, proxyYm));
+  };
+  container.querySelector("#proxyNextBtn").onclick = ()=>{
+    proxyYm = shiftMonth(proxyYm, 1);
+    proxyMessage = "";
+    withLoading(()=> loadProxyOrdersForPeriod(proxyEmployeeId, proxyYm));
+  };
+
+  // 同じ日で他のメニューにチェックが入ったら自動的に他を外す。チェックを入れたら数量に1を初期値として入れ、
+  // その日のチェックが全て外れたら数量を空欄に戻す（発注タブと同じ挙動）。
+  container.querySelectorAll(".proxyCheckbox").forEach(cb=>{
+    cb.onchange = ()=>{
+      const qtyInput = container.querySelector(`.proxyQtyInput[data-date="${cb.dataset.date}"]`);
+      if(cb.checked){
+        container.querySelectorAll(`.proxyCheckbox[data-date="${cb.dataset.date}"]`).forEach(other=>{
+          if(other !== cb) other.checked = false;
+        });
+        if(qtyInput && !qtyInput.value) qtyInput.value = "1";
+      } else {
+        const stillChecked = container.querySelector(`.proxyCheckbox[data-date="${cb.dataset.date}"]:checked`);
+        if(!stillChecked && qtyInput) qtyInput.value = "";
+      }
+    };
+  });
+
+  container.querySelector("#proxyUpdateBtn").onclick = ()=>{
+    const empId = proxyEmployeeId;
+    const changes = collectProxyOrderChanges(empId, proxyYm); // DOMが生きているうちに同期的に取得
+    withLoading(()=> placeProxyBatchOrders(empId, changes));
+  };
+}
+
+// 代理発注画面のチェックボックスの状態から変更点を集める（締切は無視するが、休配日・発注不可日は対象外）
+function collectProxyOrderChanges(employeeId, periodYm){
+  const changes = [];
+  datesInPeriod(periodYm).forEach(d=>{
+    if(isNonOrderableDay(d)) return;
+    const checked = document.querySelector(`.proxyCheckbox[data-date="${d}"]:checked`);
+    const menuId = checked ? checked.dataset.menu : null;
+    const qtyInput = document.querySelector(`.proxyQtyInput[data-date="${d}"]`);
+    const qty = Math.max(1, parseInt(qtyInput && qtyInput.value, 10) || 1);
+    const existing = existingMenuFor(employeeId, d);
+    const existingQty = existingQtyFor(employeeId, d);
+    if(menuId){
+      if(existing !== menuId || existingQty !== qty) changes.push({date:d, action:"place", menuId, qty});
+    } else if(existing){
+      changes.push({date:d, action:"cancel"});
+    }
+  });
+  return changes;
+}
+
+async function placeProxyBatchOrders(employeeId, changes){
+  let ordered = 0, cancelled = 0, failed = 0;
+  for(const c of changes){
+    try{
+      if(c.action === "place"){
+        await sbRpc("rpc_admin_place_order_for", {p_token: session.token, p_employee_id: employeeId, p_date: c.date, p_menu_id: c.menuId, p_qty: c.qty || 1});
+        if(!state.orders[c.date]) state.orders[c.date] = {};
+        state.orders[c.date][employeeId] = { menuId: c.menuId, qty: c.qty || 1 };
+        ordered++;
+      } else {
+        await sbRpc("rpc_admin_cancel_order_for", {p_token: session.token, p_employee_id: employeeId, p_date: c.date});
+        if(state.orders[c.date]) delete state.orders[c.date][employeeId];
+        cancelled++;
+      }
+    }catch(e){
+      failed++;
+    }
+  }
+  const parts = [];
+  if(ordered) parts.push(`${ordered}件を登録・修正しました`);
+  if(cancelled) parts.push(`${cancelled}件を取り消しました`);
+  if(failed) parts.push(`${failed}件は失敗しました`);
+  proxyMessage = parts.length ? parts.join(" / ") : "変更はありませんでした";
+}
+
+/* ===================== 時計 ===================== */
+function updateClock(){
+  const now = new Date();
+  document.getElementById("clockDisplay").textContent =
+    `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+}
+updateClock();
+setInterval(updateClock, 30000);
+
+/* ===================== 初期起動 ===================== */
+async function boot(){
+  await withLoading(async ()=>{
+    await loadMenu();
+    session = loadStoredSession();
+    if(session){
+      await loadSettings();
+      await loadMyOrdersForMonth(calendarYearMonth);
+    }
+  });
+}
+boot();
+</script>
+</body>
+</html>
