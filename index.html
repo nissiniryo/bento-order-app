@@ -1807,6 +1807,7 @@ function renderReceiptAdmin(container){
 let monthlyYm = periodLabelFor(todayStr());
 let monthlyGroups = []; // 集計後: [{code, name, total, byDate: {date: amount}}]
 let monthlyMenuTotals = []; // 集計後: [{menuName, totalQty, totalAmount}]
+let monthlyRaw = []; // 集計に使った生の発注データ（日別発注一覧Excel出力用）
 let monthlyMenuBreakdown = []; // 集計後: [{menuId, menuName, totalQty, totalAmount, employees: [{code,name,totalQty,totalAmount}]}]
 
 // 日付を「M/D」形式の短い表示にする（列見出し用）
@@ -1987,11 +1988,14 @@ function renderMonthlyAdmin(container){
     <div class="no-print" style="margin-top:10px;">
       <button class="secondary" id="excelMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>Excel出力</button>
       <button class="secondary" id="csvMonthlyBtn" ${monthlyGroups.length ? "" : "disabled"}>CSV出力</button>
+      <button class="secondary" id="excelDailyBtn" ${monthlyGroups.length ? "" : "disabled"}>日別発注一覧Excel出力（個人別・集計シート形式）</button>
+      <div class="hint">個人ごとに、どの日に発注したかを「○」で一覧表示したExcelを出力します（全メニュー＋メニューごとのシート。数量が2以上の日は数量を表示）。</div>
     </div>
   `;
   container.querySelector("#monthlyYmInput").onchange = (e)=>{
     if(e.target.value) monthlyYm = e.target.value;
     monthlyGroups = [];
+    monthlyRaw = [];
     monthlyMenuTotals = [];
     monthlyMenuBreakdown = [];
     renderMonthlyAdmin(container);
@@ -2000,6 +2004,7 @@ function renderMonthlyAdmin(container){
     withLoading(async ()=>{
       const range = periodRange(monthlyYm);
       const raw = await sbRpc("rpc_admin_orders_in_range", {p_token: session.token, p_start_date: range.start, p_end_date: range.end});
+      monthlyRaw = raw;
       monthlyGroups = aggregateOrdersByEmployeeDate(raw);
       monthlyMenuTotals = aggregateMenuTotals(raw);
       monthlyMenuBreakdown = aggregateMenuEmployeeBreakdown(raw);
@@ -2012,6 +2017,17 @@ function renderMonthlyAdmin(container){
         throw new Error("Excel出力に必要な部品の読み込みに失敗しました。社内ネットワークの制限などでインターネット上の部品（cdnjs.cloudflare.com）に接続できていない可能性があります。下の「CSV出力」を代わりにお使いください。");
       }
       await exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTotals: monthlyMenuTotals, menuBreakdown: monthlyMenuBreakdown, menuList: state.menu, grandTotal, grandTotalQty });
+    }catch(err){
+      alert("Excel出力でエラーが発生しました: " + (err && err.message ? err.message : err));
+    }
+  };
+  container.querySelector("#excelDailyBtn").onclick = async ()=>{
+    if(!monthlyRaw.length) return;
+    try{
+      if(typeof ExcelJS === "undefined"){
+        throw new Error("Excel出力に必要な部品の読み込みに失敗しました。社内ネットワークの制限などでcdnjs.cloudflare.comに接続できていない可能性があります。");
+      }
+      await exportDailyListExcel({ monthlyYm, rawRows: monthlyRaw });
     }catch(err){
       alert("Excel出力でエラーが発生しました: " + (err && err.message ? err.message : err));
     }
@@ -2259,6 +2275,101 @@ async function exportMonthlyExcel({ monthlyYm, monthlyGroups, deptTotals, menuTo
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
   downloadBlob(`月次発注金額集計_${monthlyYm}.xlsx`, blob);
+}
+
+// 個人別・日別の発注日一覧を、従来の「集計シート」と同じ形式（社員行 × 発注日列に○）でExcel出力する。
+// 「全メニュー」シート＋メニューごとのシートを出力する。数量が2以上の日は○ではなく数量を表示する。
+async function exportDailyListExcel({ monthlyYm, rawRows }){
+  const wb = new ExcelJS.Workbook();
+  const JP_FONT = "游ゴシック";
+  const border = { top:{style:"thin"}, left:{style:"thin"}, bottom:{style:"thin"}, right:{style:"thin"} };
+  const {start, end} = periodRange(monthlyYm);
+  const fmtFull = (s)=>{ const [y,m,d] = s.split("-"); return `${y}年${m}月${d}日`; };
+  const usedNames = new Set();
+  const safeName = (name)=>{
+    let s = String(name||"シート").replace(/[\\\/\?\*\[\]:]/g, "").slice(0, 26) || "シート";
+    let n = s, i = 2;
+    while(usedNames.has(n)){ n = s.slice(0, 26 - String(i).length - 2) + `(${i})`; i++; }
+    usedNames.add(n);
+    return n;
+  };
+
+  function buildSheet(sheetName, titleSuffix, rows){
+    const ws = wb.addWorksheet(sheetName, {
+      pageSetup: { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins:{left:0.4,right:0.4,top:0.5,bottom:0.5,header:0.2,footer:0.2} }
+    });
+    const dates = [...new Set(rows.map(r=>r.date))].sort();
+    const empMap = new Map();
+    rows.forEach(r=>{
+      if(!empMap.has(r.employee_id)) empMap.set(r.employee_id, { dept: r.dept||"", aggDept: r.agg_dept||"", code: r.code||"", name: r.name, type: r.employee_type||"employee", byDate: {}, qty: 0, amount: 0 });
+      const e = empMap.get(r.employee_id);
+      e.byDate[r.date] = (e.byDate[r.date]||0) + (r.qty||1);
+      e.qty += (r.qty||1);
+      e.amount += (r.amount||0);
+    });
+    const emps = [...empMap.values()].sort((a,b)=>
+      (a.aggDept||a.dept).localeCompare(b.aggDept||b.dept, "ja") || a.code.localeCompare(b.code, "ja", {numeric:true}));
+
+    const t = ws.addRow(["＜集計表＞", "", `${fmtFull(start)}～${fmtFull(end)}　昼食費 ${titleSuffix}`]);
+    t.font = { name: JP_FONT, bold:true, size:13 };
+    const h1 = ws.addRow(["部署名","社員番号","社員名称","金額\n（自己負担）","食数", ...dates.map(fmtDateShort)]);
+    const h2 = ws.addRow(["","","","","", ...dates.map(d=> WEEKDAY_LABELS[dayOfWeek(d)])]);
+    [h1,h2].forEach(row=> row.eachCell({includeEmpty:true}, (cell, c)=>{
+      if(c > 5 + dates.length) return;
+      cell.font = { name: JP_FONT, size:11, bold:true };
+      cell.alignment = { horizontal:"center", vertical:"middle", wrapText:true };
+      cell.fill = { type:"pattern", pattern:"solid", fgColor:{argb:"FFEFEFEF"} };
+      cell.border = border;
+    }));
+    [1,2,3,4,5].forEach(c=> ws.mergeCells(h1.number, c, h2.number, c));
+
+    const fmtRow = (row, bold)=> row.eachCell({includeEmpty:true}, (cell, c)=>{
+      if(c > 5 + dates.length) return;
+      cell.font = { name: JP_FONT, size:11, bold: !!bold };
+      cell.border = border;
+      cell.alignment = { vertical:"middle", horizontal: c >= 6 ? "center" : (c===4||c===5 ? "right" : "left") };
+    });
+    emps.forEach(e=>{
+      const row = ws.addRow([e.aggDept || e.dept, e.code, e.name, e.amount, e.qty,
+        ...dates.map(d=> e.byDate[d] ? (e.byDate[d] > 1 ? e.byDate[d] : "○") : "")]);
+      fmtRow(row, false);
+      row.getCell(4).numFmt = "¥#,##0";
+    });
+
+    // 日別合計（社員・役員 / 派遣 / 合計）
+    ws.addRow([]);
+    const sumBy = (types)=> {
+      const per = dates.map(d=> rows.filter(r=> r.date===d && types.includes(r.employee_type||"employee")).reduce((s,r)=> s+(r.qty||1), 0));
+      const amt = rows.filter(r=> types.includes(r.employee_type||"employee")).reduce((s,r)=> s+(r.amount||0), 0);
+      const qty = per.reduce((s,v)=> s+v, 0);
+      return { per, amt, qty };
+    };
+    const a = sumBy(["employee","executive"]), b = sumBy(["dispatch"]);
+    const totals = [["社員・役員", a], ["派遣", b], ["合計", { per: dates.map((_,i)=> a.per[i]+b.per[i]), amt: a.amt+b.amt, qty: a.qty+b.qty }]];
+    totals.forEach(([label, v], idx)=>{
+      const row = ws.addRow([label, "", "", v.amt, v.qty, ...v.per]);
+      ws.mergeCells(row.number, 1, row.number, 3);
+      fmtRow(row, idx===2);
+      row.getCell(4).numFmt = "¥#,##0";
+    });
+
+    ws.getColumn(1).width = 20; ws.getColumn(2).width = 11; ws.getColumn(3).width = 18;
+    ws.getColumn(4).width = 13; ws.getColumn(5).width = 7;
+    dates.forEach((_,i)=> ws.getColumn(6+i).width = 5.5);
+    ws.getRow(h1.number).height = 22;
+    ws.views = [{ state:"frozen", xSplit:5, ySplit:3 }];
+  }
+
+  buildSheet(safeName("全メニュー"), "<全メニュー>", rawRows);
+  const menuMap = new Map();
+  rawRows.forEach(r=>{ if(!menuMap.has(r.menu_id)) menuMap.set(r.menu_id, r.menu_name||""); });
+  [...menuMap.entries()].sort((x,y)=> x[1].localeCompare(y[1], "ja")).forEach(([id, name])=>{
+    buildSheet(safeName(`集計シート（${name}）`), `<${name}>`, rawRows.filter(r=> r.menu_id===id));
+  });
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+  downloadBlob(`日別発注一覧_${monthlyYm}.xlsx`, blob);
 }
 
 /* --- 代理発注（管理者権限：社員になりかわって発注登録・修正。締切後でも修正可能） --- */
